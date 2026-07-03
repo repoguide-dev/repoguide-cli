@@ -8,7 +8,9 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
+	"net"
 	"net/http"
+	"net/url"
 	"os"
 	"path/filepath"
 	"strings"
@@ -21,9 +23,14 @@ import (
 )
 
 const (
-	defaultBackendTimeout = 10 * time.Second
+	defaultBackendTimeout = time.Minute
 	analyzeBackendTimeout = 5 * time.Minute
 )
+
+var verifiedBackendHosts = map[string]struct{}{
+	"repoguide.dev":     {},
+	"www.repoguide.dev": {},
+}
 
 type CloudClient struct {
 	BaseURL      string
@@ -48,6 +55,119 @@ func NewCloudClient(baseURL, token string, svc *services.Services, localSvcFacto
 
 var _ contracts.CloudConnector = CloudClient{}
 
+func validateBackendURL(raw string) (string, error) {
+	raw = strings.TrimRight(strings.TrimSpace(raw), "/")
+	if raw == "" {
+		return "", fmt.Errorf("backend URL is empty")
+	}
+	u, err := url.Parse(raw)
+	if err != nil || u.Scheme == "" || u.Host == "" {
+		return "", fmt.Errorf("invalid backend URL %q", raw)
+	}
+	if u.User != nil || u.RawQuery != "" || u.Fragment != "" || (u.Path != "" && u.Path != "/") {
+		return "", fmt.Errorf("backend URL must be an origin without credentials, path, query, or fragment")
+	}
+	host := normalizedBackendHost(u.Hostname())
+	if u.Scheme == "https" && isVerifiedBackendHost(host) {
+		return raw, nil
+	}
+	if (u.Scheme == "http" || u.Scheme == "https") && isLoopbackHost(host) {
+		return raw, nil
+	}
+	return "", fmt.Errorf("backend URL host is not allowed")
+}
+
+func normalizedBackendHost(host string) string {
+	return strings.Trim(strings.TrimSuffix(strings.ToLower(host), "."), "[]")
+}
+
+func isVerifiedBackendHost(host string) bool {
+	_, ok := verifiedBackendHosts[host]
+	return ok
+}
+
+func isLoopbackHost(host string) bool {
+	if host == "localhost" {
+		return true
+	}
+	ip := net.ParseIP(host)
+	return ip != nil && ip.IsLoopback()
+}
+
+func (c CloudClient) newRequest(method, path string, body io.Reader) (*http.Request, error) {
+	baseURL, err := validateBackendURL(c.BaseURL)
+	if err != nil {
+		return nil, err
+	}
+	if err := validateBackendRequestPath(path); err != nil {
+		return nil, err
+	}
+	return http.NewRequest(method, baseURL+path, body)
+}
+
+func validateBackendRequestPath(path string) error {
+	u, err := url.ParseRequestURI(path)
+	if err != nil || u.Scheme != "" || u.Host != "" {
+		return fmt.Errorf("invalid backend request path %q", path)
+	}
+	if !strings.HasPrefix(path, "/") || strings.HasPrefix(path, "//") {
+		return fmt.Errorf("backend request path must be absolute-path relative")
+	}
+	if !isAllowedBackendRequestPath(u.Path) {
+		return fmt.Errorf("backend request path is not allowed: %s", u.Path)
+	}
+	return nil
+}
+
+func isAllowedBackendRequestPath(path string) bool {
+	switch path {
+	case "/version", "/api/limits", "/api/auth/me", "/api/repos":
+		return true
+	}
+	if !strings.HasPrefix(path, "/api/repos/") {
+		return false
+	}
+	parts := strings.Split(strings.TrimPrefix(path, "/api/repos/"), "/")
+	if len(parts) == 0 || parts[0] == "" {
+		return false
+	}
+	if len(parts) == 1 {
+		return true
+	}
+	switch parts[1] {
+	case "events":
+		return len(parts) == 2 || (len(parts) == 3 && parts[2] == "")
+	case "analyze":
+		return len(parts) == 2
+	case "mcp-calls":
+		return len(parts) == 2
+	case "mcp":
+		if len(parts) == 3 && (parts[2] == "topics" || parts[2] == "understand-task" || parts[2] == "feedback" || parts[2] == "search") {
+			return true
+		}
+		return len(parts) == 4 && parts[2] == "topics" && parts[3] != ""
+	default:
+		return false
+	}
+}
+
+func validateBackendRedirect(req *http.Request, via []*http.Request) error {
+	if len(via) >= 10 {
+		return fmt.Errorf("stopped after 10 redirects")
+	}
+	if _, err := validateBackendURL(requestOrigin(req.URL)); err != nil {
+		return err
+	}
+	return validateBackendRequestPath(req.URL.RequestURI())
+}
+
+func requestOrigin(u *url.URL) string {
+	if u == nil {
+		return ""
+	}
+	return u.Scheme + "://" + u.Host
+}
+
 // shouldUseLocal returns true when the given repo should be served from the
 // local SQLite store rather than the remote backend.
 // In pure local mode (no cloud token) all repos go local.
@@ -68,7 +188,7 @@ func (c CloudClient) GetRepo(repoID string) (*RepoInfo, error) {
 	if strings.TrimSpace(c.Token) == "" || strings.TrimSpace(c.BaseURL) == "" {
 		return nil, nil
 	}
-	req, err := http.NewRequest(http.MethodGet, strings.TrimRight(c.BaseURL, "/")+"/api/repos/"+repoID, nil)
+	req, err := c.newRequest(http.MethodGet, "/api/repos/"+url.PathEscape(repoID), nil)
 	if err != nil {
 		return nil, err
 	}
@@ -103,7 +223,7 @@ func (c CloudClient) RegisterRepo(repoID, repoRoot string) error {
 	if err != nil {
 		return err
 	}
-	req, err := http.NewRequest(http.MethodPost, strings.TrimRight(c.BaseURL, "/")+"/api/repos", bytes.NewReader(body))
+	req, err := c.newRequest(http.MethodPost, "/api/repos", bytes.NewReader(body))
 	if err != nil {
 		return err
 	}
@@ -127,7 +247,7 @@ func (c CloudClient) DeleteRepo(repoID string) error {
 	if strings.TrimSpace(c.Token) == "" || strings.TrimSpace(c.BaseURL) == "" || strings.TrimSpace(repoID) == "" {
 		return nil
 	}
-	req, err := http.NewRequest(http.MethodDelete, strings.TrimRight(c.BaseURL, "/")+"/api/repos/"+repoID, nil)
+	req, err := c.newRequest(http.MethodDelete, "/api/repos/"+url.PathEscape(repoID), nil)
 	if err != nil {
 		return err
 	}
@@ -195,7 +315,7 @@ func (c CloudClient) UploadRepoEvents(repoID, repoRoot string) error {
 	if n == 0 {
 		return nil
 	}
-	req, err := http.NewRequest(http.MethodPost, strings.TrimRight(c.BaseURL, "/")+"/api/repos/"+repoID+"/events/", bytes.NewReader(payload))
+	req, err := c.newRequest(http.MethodPost, "/api/repos/"+url.PathEscape(repoID)+"/events/", bytes.NewReader(payload))
 	if err != nil {
 		return err
 	}
@@ -221,11 +341,11 @@ func (c CloudClient) TriggerAnalyze(repoID string, force bool) error {
 	if strings.TrimSpace(c.Token) == "" || strings.TrimSpace(c.BaseURL) == "" || strings.TrimSpace(repoID) == "" {
 		return nil
 	}
-	url := strings.TrimRight(c.BaseURL, "/") + "/api/repos/" + repoID + "/analyze"
+	path := "/api/repos/" + url.PathEscape(repoID) + "/analyze"
 	if force {
-		url += "?force=true"
+		path += "?force=true"
 	}
-	req, err := http.NewRequest(http.MethodPost, url, nil)
+	req, err := c.newRequest(http.MethodPost, path, nil)
 	if err != nil {
 		return err
 	}
@@ -265,6 +385,8 @@ func buildRepoEventsZip(repoID, repoRoot string, since time.Time) ([]byte, int, 
 		return nil, 0, fmt.Errorf("repo session index not found for %s", repoID)
 	}
 
+	storeDir := filepath.Join(RepoGuideDir(), "repos", repoID)
+	cfg, _ := LoadRepoConfigFile(storeDir)
 	var n int
 	var buf bytes.Buffer
 	zw := zip.NewWriter(&buf)
@@ -274,6 +396,10 @@ func buildRepoEventsZip(repoID, repoRoot string, since time.Time) ([]byte, int, 
 		}
 		eventsPath := filepath.Join(RepoGuideDir(), "sessions", session.ID, sessionEventLogFileName)
 		data, err := os.ReadFile(eventsPath)
+		if err != nil {
+			return nil, 0, err
+		}
+		data, err = sanitizeEventLogForUpload(data, cfg)
 		if err != nil {
 			return nil, 0, err
 		}
@@ -287,7 +413,7 @@ func buildRepoEventsZip(repoID, repoRoot string, since time.Time) ([]byte, int, 
 		n++
 	}
 
-	if docs := readHintFileDocs(repoID, repoRoot); len(docs) > 0 {
+	if docs := readHintFileDocsFromConfig(cfg, repoRoot); len(docs) > 0 {
 		data, err := json.Marshal(docs)
 		if err != nil {
 			return nil, 0, err
@@ -356,14 +482,102 @@ func readHintFileDocs(repoID, repoRoot string) map[string]string {
 	if err != nil || len(cfg.HintFiles) == 0 {
 		return nil
 	}
+	return readHintFileDocsFromConfig(cfg, repoRoot)
+}
+
+func readHintFileDocsFromConfig(cfg RepoConfig, repoRoot string) map[string]string {
+	if len(cfg.HintFiles) == 0 {
+		return nil
+	}
 	docs := make(map[string]string, len(cfg.HintFiles))
 	for _, name := range cfg.HintFiles {
-		data, err := os.ReadFile(filepath.Join(repoRoot, name))
+		path, ok := safeHintFilePath(repoRoot, name)
+		if !ok {
+			continue
+		}
+		data, err := os.ReadFile(path)
 		if err == nil {
 			docs[name] = string(data)
 		}
 	}
 	return docs
+}
+
+func safeHintFilePath(repoRoot, name string) (string, bool) {
+	name = strings.TrimSpace(name)
+	if name == "" || filepath.IsAbs(name) {
+		return "", false
+	}
+	ext := strings.ToLower(filepath.Ext(name))
+	if ext != ".md" && ext != ".txt" {
+		return "", false
+	}
+	clean := filepath.Clean(name)
+	if clean == "." || clean == ".." || strings.HasPrefix(clean, ".."+string(filepath.Separator)) {
+		return "", false
+	}
+	root, err := filepath.EvalSymlinks(repoRoot)
+	if err != nil {
+		root, err = filepath.Abs(repoRoot)
+		if err != nil {
+			return "", false
+		}
+	}
+	candidate := filepath.Join(root, clean)
+	resolved, err := filepath.EvalSymlinks(candidate)
+	if err != nil {
+		return "", false
+	}
+	rel, err := filepath.Rel(root, resolved)
+	if err != nil || rel == "." || rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
+		return "", false
+	}
+	return resolved, true
+}
+
+func sanitizeEventLogForUpload(data []byte, cfg RepoConfig) ([]byte, error) {
+	var log SessionEventLog
+	if err := json.Unmarshal(data, &log); err != nil {
+		return nil, err
+	}
+	events := append([]SessionEvent(nil), log.Events...)
+	redactEvents(events)
+	if !rawPromptsEnabled(cfg) {
+		for i := range events {
+			if events[i].Kind == "prompt" {
+				events[i].Text = "[redacted prompt]"
+				events[i].SearchQuery = ""
+			}
+		}
+	}
+	log.Events = events
+	return json.MarshalIndent(log, "", "  ")
+}
+
+func rawPromptsEnabled(cfg RepoConfig) bool {
+	globalCfg, err := LoadGlobalConfig()
+	if err != nil {
+		return true
+	}
+	switch v := globalCfg.Privacy.RawPrompts.(type) {
+	case bool:
+		return v
+	case string:
+		return rawPromptsStringEnabled(v)
+	default:
+		return true
+	}
+}
+
+func rawPromptsStringEnabled(value string) bool {
+	switch strings.ToLower(strings.TrimSpace(value)) {
+	case "", "yes", "true", "on", "raw", "always":
+		return true
+	case "no", "false", "off", "never", "local_only", "local-only":
+		return false
+	default:
+		return true
+	}
 }
 
 type LimitInfo = contracts.LimitInfo
@@ -374,7 +588,7 @@ func (c CloudClient) GetLimits() (*LimitsResponse, error) {
 	if strings.TrimSpace(c.Token) == "" || strings.TrimSpace(c.BaseURL) == "" {
 		return nil, nil
 	}
-	req, err := http.NewRequest(http.MethodGet, strings.TrimRight(c.BaseURL, "/")+"/api/limits", nil)
+	req, err := c.newRequest(http.MethodGet, "/api/limits", nil)
 	if err != nil {
 		return nil, err
 	}
@@ -398,7 +612,7 @@ func (c CloudClient) GetLimits() (*LimitsResponse, error) {
 type MeResponse = contracts.MeResponse
 
 func (c CloudClient) DeleteMe() error {
-	req, err := http.NewRequest(http.MethodDelete, strings.TrimRight(c.BaseURL, "/")+"/api/auth/me", nil)
+	req, err := c.newRequest(http.MethodDelete, "/api/auth/me", nil)
 	if err != nil {
 		return err
 	}
@@ -418,7 +632,7 @@ func (c CloudClient) GetMe() (*MeResponse, error) {
 	if strings.TrimSpace(c.Token) == "" || strings.TrimSpace(c.BaseURL) == "" {
 		return nil, fmt.Errorf("not authenticated")
 	}
-	req, err := http.NewRequest(http.MethodGet, strings.TrimRight(c.BaseURL, "/")+"/api/auth/me", nil)
+	req, err := c.newRequest(http.MethodGet, "/api/auth/me", nil)
 	if err != nil {
 		return nil, err
 	}
@@ -452,7 +666,7 @@ func (c CloudClient) GetMCPTopics(repoID string) ([]MCPTopicSummary, error) {
 	if strings.TrimSpace(c.Token) == "" || strings.TrimSpace(c.BaseURL) == "" {
 		return nil, nil
 	}
-	req, err := http.NewRequest(http.MethodGet, strings.TrimRight(c.BaseURL, "/")+"/api/repos/"+repoID+"/mcp/topics", nil)
+	req, err := c.newRequest(http.MethodGet, "/api/repos/"+url.PathEscape(repoID)+"/mcp/topics", nil)
 	if err != nil {
 		return nil, err
 	}
@@ -487,8 +701,11 @@ func (c CloudClient) GetMCPSearchContext(repoID, topicID, query string) (*MCPSea
 	if strings.TrimSpace(c.Token) == "" || strings.TrimSpace(c.BaseURL) == "" {
 		return nil, nil
 	}
-	url := strings.TrimRight(c.BaseURL, "/") + "/api/repos/" + repoID + "/mcp/search?topic_id=" + topicID + "&query=" + query
-	req, err := http.NewRequest(http.MethodGet, url, nil)
+	values := url.Values{}
+	values.Set("topic_id", topicID)
+	values.Set("query", query)
+	path := "/api/repos/" + url.PathEscape(repoID) + "/mcp/search?" + values.Encode()
+	req, err := c.newRequest(http.MethodGet, path, nil)
 	if err != nil {
 		return nil, err
 	}
@@ -519,7 +736,7 @@ func (c CloudClient) GetMCPTopicContext(repoID, topicID string) (*MCPTopicContex
 	if strings.TrimSpace(c.Token) == "" || strings.TrimSpace(c.BaseURL) == "" {
 		return nil, nil
 	}
-	req, err := http.NewRequest(http.MethodGet, strings.TrimRight(c.BaseURL, "/")+"/api/repos/"+repoID+"/mcp/topics/"+topicID, nil)
+	req, err := c.newRequest(http.MethodGet, "/api/repos/"+url.PathEscape(repoID)+"/mcp/topics/"+url.PathEscape(topicID), nil)
 	if err != nil {
 		return nil, err
 	}
@@ -553,7 +770,7 @@ func (c CloudClient) GetMCPUnderstandTask(repoID, task, topicID string, prompts 
 		return nil, nil
 	}
 	body, _ := json.Marshal(contracts.MCPUnderstandTaskRequest{Task: task, TopicID: topicID, Prompts: prompts})
-	req, err := http.NewRequest(http.MethodPost, strings.TrimRight(c.BaseURL, "/")+"/api/repos/"+repoID+"/mcp/understand-task", bytes.NewReader(body))
+	req, err := c.newRequest(http.MethodPost, "/api/repos/"+url.PathEscape(repoID)+"/mcp/understand-task", bytes.NewReader(body))
 	if err != nil {
 		return nil, err
 	}
@@ -590,7 +807,7 @@ func (c CloudClient) CreateMCPCall(repoID string, reqBody MCPCallCreateRequest) 
 	if err != nil {
 		return nil, err
 	}
-	req, err := http.NewRequest(http.MethodPost, strings.TrimRight(c.BaseURL, "/")+"/api/repos/"+repoID+"/mcp-calls", bytes.NewReader(body))
+	req, err := c.newRequest(http.MethodPost, "/api/repos/"+url.PathEscape(repoID)+"/mcp-calls", bytes.NewReader(body))
 	if err != nil {
 		return nil, err
 	}
@@ -628,7 +845,7 @@ func (c CloudClient) RecordMCPFeedback(repoID string, req MCPFeedbackRequest) er
 	if err != nil {
 		return err
 	}
-	httpReq, err := http.NewRequest(http.MethodPost, strings.TrimRight(c.BaseURL, "/")+"/api/repos/"+repoID+"/mcp/feedback", bytes.NewReader(body))
+	httpReq, err := c.newRequest(http.MethodPost, "/api/repos/"+url.PathEscape(repoID)+"/mcp/feedback", bytes.NewReader(body))
 	if err != nil {
 		return err
 	}
@@ -662,11 +879,11 @@ func (c CloudClient) CheckRequiredVersion() (string, error) {
 	if strings.TrimSpace(c.BaseURL) == "" {
 		return "", nil
 	}
-	req, err := http.NewRequest(http.MethodGet, strings.TrimRight(c.BaseURL, "/")+"/version", nil)
+	req, err := c.newRequest(http.MethodGet, "/version", nil)
 	if err != nil {
 		return "", err
 	}
-	client := &http.Client{Timeout: 3 * time.Second}
+	client := c.backendHTTPClient(3 * time.Second)
 	resp, err := client.Do(req)
 	if err != nil {
 		return "", err
@@ -682,17 +899,39 @@ func (c CloudClient) CheckRequiredVersion() (string, error) {
 }
 
 func (c CloudClient) httpClient() *http.Client {
-	if c.Client != nil {
-		return c.Client
-	}
-	return &http.Client{Timeout: defaultBackendTimeout}
+	return c.backendHTTPClient(defaultBackendTimeout)
 }
 
 func (c CloudClient) analyzeHTTPClient() *http.Client {
+	return c.backendHTTPClient(analyzeBackendTimeout)
+}
+
+func (c CloudClient) backendHTTPClient(timeout time.Duration) *http.Client {
 	if c.Client != nil {
-		return c.Client
+		return withBackendRedirectPolicy(c.Client)
 	}
-	return &http.Client{Timeout: analyzeBackendTimeout}
+	return &http.Client{
+		Timeout:       timeout,
+		CheckRedirect: validateBackendRedirect,
+	}
+}
+
+func withBackendRedirectPolicy(client *http.Client) *http.Client {
+	if client == nil {
+		return nil
+	}
+	out := *client
+	original := client.CheckRedirect
+	out.CheckRedirect = func(req *http.Request, via []*http.Request) error {
+		if err := validateBackendRedirect(req, via); err != nil {
+			return err
+		}
+		if original != nil {
+			return original(req, via)
+		}
+		return nil
+	}
+	return &out
 }
 
 // ── Local-mode overrides ──────────────────────────────────────────────────────

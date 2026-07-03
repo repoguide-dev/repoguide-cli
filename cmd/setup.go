@@ -103,13 +103,16 @@ func runCILogin() error {
 	if ciToken == "" {
 		return fmt.Errorf("REPOGUIDE_CI_TOKEN is not set")
 	}
-	baseURL := getBackendURL()
+	baseURL, err := validatedBackendURL()
+	if err != nil {
+		return err
+	}
 	req, err := http.NewRequest(http.MethodPost, strings.TrimRight(baseURL, "/")+"/api/auth/ci/exchange", nil)
 	if err != nil {
 		return err
 	}
 	req.Header.Set("Authorization", "Bearer "+ciToken)
-	resp, err := http.DefaultClient.Do(req)
+	resp, err := authHTTPClient.Do(req)
 	if err != nil {
 		return fmt.Errorf("cannot reach backend at %s: %w", baseURL, err)
 	}

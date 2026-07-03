@@ -2,22 +2,22 @@ package sessionimport
 
 import "testing"
 
-func TestRedactEventsPreservesAllFields(t *testing.T) {
+func TestRedactEventsRedactsSecretsButKeepsPaths(t *testing.T) {
 	events := []SessionEvent{{
-		Text:        "token sk_live_1234567890/with-symbol",
-		CommandText: `rg "token sk_live_1234567890/with-symbol" README.md`,
-		SearchQuery: `token sk_live_1234567890/with-symbol`,
+		Text:        `open "/repo/pkg/auth.go" with token=sk-live-abcdefghijklmnopqrstuvwxyz`,
+		CommandText: `rg "password=hunter2" /repo/pkg/auth.go`,
+		SearchQuery: `Bearer eyJaaaaaaaaaa.bbbbbbbbbbbb.cccccccccccc`,
 	}}
 
 	redactEvents(events)
 
-	if events[0].Text != "token sk_live_1234567890/with-symbol" {
-		t.Fatalf("expected text to be preserved, got %q", events[0].Text)
+	if events[0].Text != `open "/repo/pkg/auth.go" with token=[redacted]` {
+		t.Fatalf("unexpected text redaction: %q", events[0].Text)
 	}
-	if events[0].CommandText != `rg "token sk_live_1234567890/with-symbol" README.md` {
-		t.Fatalf("expected command text to be preserved, got %q", events[0].CommandText)
+	if events[0].CommandText != `rg "password=[redacted]" /repo/pkg/auth.go` {
+		t.Fatalf("unexpected command redaction: %q", events[0].CommandText)
 	}
-	if events[0].SearchQuery != `token sk_live_1234567890/with-symbol` {
-		t.Fatalf("expected search query to be preserved, got %q", events[0].SearchQuery)
+	if events[0].SearchQuery != `Bearer [redacted]` {
+		t.Fatalf("unexpected search redaction: %q", events[0].SearchQuery)
 	}
 }

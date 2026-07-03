@@ -16,11 +16,36 @@ import (
 var (
 	uuidPattern      = regexp.MustCompile(`[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}`)
 	longTokenPattern = regexp.MustCompile(`\S{17,}`)
+	secretPatterns   = []*regexp.Regexp{
+		regexp.MustCompile(`(?i)\b(sk-(?:live|test|proj)-[A-Za-z0-9_-]{12,}|sk_[A-Za-z0-9_-]{12,})\b`),
+		regexp.MustCompile(`\b(?:ghp|gho|ghu|ghs|ghr)_[A-Za-z0-9_]{20,}\b`),
+		regexp.MustCompile(`\b(?:AKIA|ASIA)[A-Z0-9]{16}\b`),
+		regexp.MustCompile(`\beyJ[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}\b`),
+		regexp.MustCompile(`(?i)\b(password|passwd|pwd|token|api[_-]?key|secret|authorization)\s*[:=]\s*["']?[^"'\s]+`),
+		regexp.MustCompile(`(?i)\bBearer\s+[A-Za-z0-9._~+/=-]{16,}`),
+	}
 )
 
 func redactSecrets(text string) string {
 	text = uuidPattern.ReplaceAllString(text, "[id]")
+	for _, pattern := range secretPatterns {
+		text = pattern.ReplaceAllStringFunc(text, func(match string) string {
+			if idx := strings.IndexAny(match, ":="); idx >= 0 {
+				return match[:idx+1] + "[redacted]"
+			}
+			if strings.HasPrefix(strings.ToLower(match), "bearer ") {
+				return "Bearer [redacted]"
+			}
+			return "[redacted]"
+		})
+	}
 	return longTokenPattern.ReplaceAllStringFunc(text, func(tok string) string {
+		if strings.Contains(tok, "[redacted]") {
+			return tok
+		}
+		if looksLikePathToken(tok) {
+			return tok
+		}
 		for _, r := range tok {
 			if !unicode.IsLetter(r) && !unicode.IsDigit(r) && r != '_' && r != '-' && r != '.' && r != '/' {
 				return "[redacted]"
@@ -30,8 +55,24 @@ func redactSecrets(text string) string {
 	})
 }
 
+func looksLikePathToken(tok string) bool {
+	trimmed := strings.Trim(tok, "\"'`()[]{}:,")
+	return strings.HasPrefix(trimmed, "/") ||
+		strings.HasPrefix(trimmed, "./") ||
+		strings.HasPrefix(trimmed, "../") ||
+		strings.Contains(trimmed, string(filepath.Separator)) ||
+		strings.Contains(trimmed, "\\")
+}
+
 func redactEvents(events []SessionEvent) {
-	_ = events
+	for i := range events {
+		events[i].Text = redactSecrets(events[i].Text)
+		events[i].CommandText = redactSecrets(events[i].CommandText)
+		events[i].SearchQuery = redactSecrets(events[i].SearchQuery)
+		for j := range events[i].Command {
+			events[i].Command[j] = redactSecrets(events[i].Command[j])
+		}
+	}
 }
 
 const (
@@ -74,7 +115,7 @@ func BuildSessionArtifacts(session SessionSummary) (SessionArtifacts, error) {
 	}
 
 	dir := filepath.Join(RepoGuideDir(), "sessions", session.ID)
-	if err := os.MkdirAll(dir, 0o755); err != nil {
+	if err := os.MkdirAll(dir, 0o700); err != nil {
 		return SessionArtifacts{}, err
 	}
 

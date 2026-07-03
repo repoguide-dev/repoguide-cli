@@ -25,6 +25,8 @@ type ExplorationStats = internalpkg.ExplorationStats
 type ContextStats = internalpkg.ContextStats
 type ModelPricing = internalpkg.ModelPricing
 type RepoConfig = repo.RepoConfig
+type GlobalConfig = internalpkg.GlobalConfig
+type PrivacyDefaults = internalpkg.PrivacyDefaults
 
 func AnalyzeSessionEventLog(eventLog SessionEventLog) SessionMetrics {
 	return internalpkg.AnalyzeSessionEventLog(eventLog)
@@ -64,4 +66,8 @@ func LoadRepoConfigFile(storeDir string) (RepoConfig, error) {
 
 func SaveRepoConfigFile(storeDir string, cfg RepoConfig) error {
 	return repo.SaveRepoConfigFile(storeDir, cfg)
+}
+
+func LoadGlobalConfig() (GlobalConfig, error) {
+	return internalpkg.LoadGlobalConfig()
 }

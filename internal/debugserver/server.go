@@ -4,7 +4,10 @@ package debugserver
 
 import (
 	"encoding/json"
+	"fmt"
+	"net"
 	"net/http"
+	"strings"
 
 	"github.com/repoguide/repoguide-cli/internal/services"
 )
@@ -17,6 +20,10 @@ func New(svc *services.Services) *Server { return &Server{svc} }
 
 // Start registers routes and blocks serving on addr.
 func (s *Server) Start(addr string) error {
+	addr, err := loopbackAddr(addr)
+	if err != nil {
+		return err
+	}
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /api/repos", s.listRepos)
 	mux.HandleFunc("GET /api/repos/{id}/topics", s.listTopics)
@@ -25,6 +32,28 @@ func (s *Server) Start(addr string) error {
 	mux.HandleFunc("GET /api/repos/{id}/mcp/files", s.mcpFiles)
 	mux.HandleFunc("GET /api/repos/{id}/mcp/search", s.mcpSearch)
 	return http.ListenAndServe(addr, mux)
+}
+
+func loopbackAddr(addr string) (string, error) {
+	host, port, err := net.SplitHostPort(addr)
+	if err != nil {
+		return "", err
+	}
+	if port == "" {
+		return "", fmt.Errorf("debug server port is required")
+	}
+	if host == "" {
+		return net.JoinHostPort("127.0.0.1", port), nil
+	}
+	host = strings.Trim(strings.ToLower(host), "[]")
+	if host == "localhost" {
+		return net.JoinHostPort("localhost", port), nil
+	}
+	ip := net.ParseIP(host)
+	if ip == nil || !ip.IsLoopback() {
+		return "", fmt.Errorf("debug server only supports loopback binds")
+	}
+	return net.JoinHostPort(host, port), nil
 }
 
 func writeJSON(w http.ResponseWriter, code int, v any) {

@@ -54,9 +54,8 @@ type GlobalConfig struct {
 }
 
 type PrivacyDefaults struct {
-	RawPrompts   string `json:"rawPrompts"`
+	RawPrompts   any    `json:"rawPrompts"`
 	FileContents string `json:"fileContents"`
-	UploadMode   string `json:"uploadMode"`
 }
 
 type Agreements struct {
@@ -233,7 +232,7 @@ func ensureStore(storeRoot, storeDir, repoRoot, repoID, mode string) error {
 		filepath.Join(storeDir, "cache"),
 	}
 	for _, dir := range dirs {
-		if err := os.MkdirAll(dir, 0o755); err != nil {
+		if err := os.MkdirAll(dir, 0o700); err != nil {
 			return err
 		}
 	}
@@ -243,9 +242,8 @@ func ensureStore(storeRoot, storeDir, repoRoot, repoID, mode string) error {
 		if err := writeJSON(cfgPath, GlobalConfig{
 			Version: repoguideVersion,
 			Privacy: PrivacyDefaults{
-				RawPrompts:   "local_only",
+				RawPrompts:   "yes",
 				FileContents: "never_stored",
-				UploadMode:   "manual",
 			},
 			CreatedAt: time.Now().UTC().Format(time.RFC3339),
 		}); err != nil {
@@ -567,7 +565,7 @@ func InitRepoAt(repoRoot string, opts InitOptions) (InitResult, error) {
 }
 
 func writeJSON(path string, value any) error {
-	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
 		return err
 	}
 	data, err := json.MarshalIndent(value, "", "  ")
@@ -575,7 +573,7 @@ func writeJSON(path string, value any) error {
 		return err
 	}
 	data = append(data, '\n')
-	return os.WriteFile(path, data, 0o644)
+	return os.WriteFile(path, data, 0o600)
 }
 
 func boolPtr(v bool) *bool { return &v }
