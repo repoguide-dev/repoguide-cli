@@ -1,0 +1,11 @@
+.DS_Store
+.idea
+.claude
+coverage
+*.log
+repoguide
+.gomodcache
+.gocaches
+.pycache
+.env
+.env.prod

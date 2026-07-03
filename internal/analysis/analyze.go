@@ -1,0 +1,294 @@
+package analysis
+
+import (
+	"regexp"
+	"strings"
+	"time"
+
+	"github.com/repoguide/repoguide-core/model"
+)
+
+var searchToolNames = map[string]bool{"WebSearch": true, "WebFetch": true, "Grep": true}
+var searchShellCmds = map[string]bool{"grep": true, "rg": true, "ag": true, "ack": true, "find": true}
+var shellSearchQueryPattern = regexp.MustCompile(`(?:^|[\s;&|])(?:rg|grep|ag|ack)\s+(?:-[^\s]+\s+)*(?:"([^"]+)"|'([^']+)'|([^\s]+))`)
+
+var modelPricing = map[string][4]float64{
+	"claude-fable-5":    {10.00, 50.00, 1.00, 12.50},
+	"claude-opus-4-8":   {5.00, 25.00, 0.50, 6.25},
+	"claude-opus-4-7":   {5.00, 25.00, 0.50, 6.25},
+	"claude-sonnet-4-6": {3.00, 15.00, 0.30, 3.75},
+	"claude-sonnet-4-5": {3.00, 15.00, 0.30, 3.75},
+	"claude-haiku-4-5":  {1.00, 5.00, 0.10, 1.25},
+	"gpt-5.4":           {2.50, 15.00, 0.25, 0},
+	"gpt-5.4-mini":      {0.75, 4.50, 0.075, 0},
+	"gemini-2.5-pro":    {1.25, 10.00, 0.125, 0},
+	"gemini-2.5-flash":  {0.30, 2.50, 0.03, 0},
+}
+
+func estimateCost(model string, usage *model.TokenUsage) float64 {
+	if usage == nil {
+		return 0
+	}
+	p, ok := modelPricing[strings.TrimSpace(model)]
+	if !ok {
+		return 0
+	}
+	const m = 1_000_000.0
+	return float64(usage.InputTokens)*p[0]/m +
+		float64(usage.OutputTokens)*p[1]/m +
+		float64(usage.CacheReadTokens)*p[2]/m +
+		float64(usage.CacheWriteTokens)*p[3]/m
+}
+
+func analyzeSessionEvents(events []model.SessionEvent) sessionMetrics {
+	readCounts := map[string]int{}
+	writeCounts := map[string]int{}
+	var metrics sessionMetrics
+
+	var cumulative *model.TokenUsage
+	var prevCumulative *model.TokenUsage
+	var incremental model.TokenUsage
+	firstEditSeen := false
+	var errorIndices []int
+
+	var curBlock *promptBlock
+	curBlockReadSet := map[string]struct{}{}
+	curBlockWriteSet := map[string]struct{}{}
+	curBlockFirstEditSeen := false
+	var curBlockUsage model.TokenUsage
+	var activeSearches []int
+
+	flush := func() {
+		if curBlock == nil {
+			return
+		}
+		for _, s := range curBlock.Searches {
+			if s.EditTarget == "" {
+				curBlock.DeadEndSearches++
+			}
+		}
+		curBlock.ReadFiles = sortedKeys(curBlockReadSet)
+		curBlock.EditedFiles = sortedKeys(curBlockWriteSet)
+		if hasUsage(curBlockUsage) {
+			u := curBlockUsage
+			curBlock.TokenUsage = &u
+		}
+		if len(curBlock.EditedFiles) > 0 || curBlock.ReadsBeforeFirstEdit > 0 || len(curBlock.Searches) > 0 {
+			metrics.PromptBlocks = append(metrics.PromptBlocks, *curBlock)
+		}
+		curBlock = nil
+		curBlockReadSet = map[string]struct{}{}
+		curBlockWriteSet = map[string]struct{}{}
+		curBlockFirstEditSeen = false
+		curBlockUsage = model.TokenUsage{}
+		activeSearches = nil
+	}
+
+	for _, ev := range events {
+		isSearch := ev.Kind == "tool_call" && isSearchEvent(ev)
+		if len(ev.WritePaths) > 0 {
+			firstEditSeen = true
+			curBlockFirstEditSeen = true
+		}
+		switch ev.Kind {
+		case "prompt":
+			if strings.TrimSpace(ev.Text) != "" {
+				flush()
+				metrics.UserPromptCount++
+				curBlock = &promptBlock{}
+			}
+		case "tool_call":
+			metrics.ToolCallCount++
+			if curBlock != nil && isSearch {
+				curBlock.Searches = append(curBlock.Searches, searchTrace{Query: searchQuery(ev)})
+				activeSearches = append(activeSearches, len(curBlock.Searches)-1)
+			}
+		case "tool_result":
+			if ev.IsError {
+				errorIndices = append(errorIndices, ev.Index)
+			}
+		case "token_usage":
+			if ev.TokenUsage == nil {
+				continue
+			}
+			if ev.TokenUsage.Cumulative {
+				delta := tokenDelta(prevCumulative, ev.TokenUsage)
+				cp := *ev.TokenUsage
+				cumulative = &cp
+				prevCumulative = &cp
+				if !hasUsage(delta) {
+					continue
+				}
+				addUsage(&incremental, delta)
+				if curBlock != nil {
+					addUsage(&curBlockUsage, delta)
+				}
+				continue
+			}
+			addUsage(&incremental, *ev.TokenUsage)
+			if curBlock != nil {
+				addUsage(&curBlockUsage, *ev.TokenUsage)
+			}
+		}
+
+		for _, path := range ev.ReadPaths {
+			if path == "" {
+				continue
+			}
+			readCounts[path]++
+			if curBlock == nil {
+				continue
+			}
+			if !isSearch {
+				for _, idx := range activeSearches {
+					tr := &curBlock.Searches[idx]
+					tr.ReadsBeforeEdit++
+					if !containsStr(tr.ReadFiles, path) {
+						tr.ReadFiles = append(tr.ReadFiles, path)
+					}
+				}
+			}
+			if !curBlockFirstEditSeen {
+				if _, seen := curBlockReadSet[path]; !seen {
+					curBlockReadSet[path] = struct{}{}
+					curBlock.ReadsBeforeFirstEdit++
+				}
+			}
+		}
+
+		for _, path := range ev.WritePaths {
+			if path == "" {
+				continue
+			}
+			writeCounts[path]++
+			if curBlock != nil {
+				curBlockWriteSet[path] = struct{}{}
+				for _, idx := range activeSearches {
+					tr := &curBlock.Searches[idx]
+					if tr.EditTarget == "" {
+						tr.EditTarget = path
+						tr.FoundViaSearch = containsStr(tr.ReadFiles, path)
+					}
+				}
+				activeSearches = nil
+			}
+		}
+		_ = firstEditSeen
+	}
+	flush()
+
+	if cumulative != nil {
+		metrics.TokenUsage = cumulative
+	} else if hasUsage(incremental) {
+		metrics.TokenUsage = &incremental
+	}
+	if len(readCounts) > 0 {
+		metrics.ReadFileCounts = readCounts
+	}
+	if len(writeCounts) > 0 {
+		metrics.EditFileCounts = writeCounts
+	}
+
+	if len(errorIndices) > 0 {
+		// basic failure tracking (last tool call index for recovery detection)
+		lastTC := -1
+		for _, ev := range events {
+			if ev.Kind == "tool_call" {
+				lastTC = ev.Index
+			}
+		}
+		_ = lastTC
+	}
+
+	return metrics
+}
+
+func sessionTimestamp(events []model.SessionEvent, fallback time.Time) time.Time {
+	for _, ev := range events {
+		if ev.Timestamp != "" {
+			if t, err := time.Parse(time.RFC3339Nano, ev.Timestamp); err == nil {
+				return t
+			}
+		}
+	}
+	return fallback
+}
+
+func isSearchEvent(ev model.SessionEvent) bool {
+	if searchToolNames[ev.ToolName] {
+		return true
+	}
+	fields := strings.Fields(ev.CommandText)
+	return len(fields) > 0 && searchShellCmds[fields[0]]
+}
+
+func searchQuery(ev model.SessionEvent) string {
+	if q := strings.TrimSpace(ev.SearchQuery); q != "" {
+		return q
+	}
+	if m := shellSearchQueryPattern.FindStringSubmatch(ev.CommandText); len(m) > 0 {
+		for _, c := range m[1:] {
+			if c != "" {
+				return c
+			}
+		}
+	}
+	return strings.TrimSpace(ev.CommandText)
+}
+
+func addUsage(dst *model.TokenUsage, src model.TokenUsage) {
+	dst.InputTokens += src.InputTokens
+	dst.OutputTokens += src.OutputTokens
+	dst.CacheReadTokens += src.CacheReadTokens
+	dst.CacheWriteTokens += src.CacheWriteTokens
+}
+
+func tokenDelta(prev *model.TokenUsage, next *model.TokenUsage) model.TokenUsage {
+	if prev == nil {
+		return model.TokenUsage{
+			InputTokens:      next.InputTokens,
+			OutputTokens:     next.OutputTokens,
+			CacheReadTokens:  next.CacheReadTokens,
+			CacheWriteTokens: next.CacheWriteTokens,
+		}
+	}
+	nd := func(a, b int64) int64 {
+		if a <= b {
+			return 0
+		}
+		return a - b
+	}
+	return model.TokenUsage{
+		InputTokens:      nd(next.InputTokens, prev.InputTokens),
+		OutputTokens:     nd(next.OutputTokens, prev.OutputTokens),
+		CacheReadTokens:  nd(next.CacheReadTokens, prev.CacheReadTokens),
+		CacheWriteTokens: nd(next.CacheWriteTokens, prev.CacheWriteTokens),
+	}
+}
+
+func hasUsage(u model.TokenUsage) bool {
+	return u.InputTokens > 0 || u.OutputTokens > 0 || u.CacheReadTokens > 0 || u.CacheWriteTokens > 0
+}
+
+func effectiveCtx(u *model.TokenUsage) int64 {
+	if u == nil {
+		return 0
+	}
+	return u.InputTokens + u.CacheReadTokens + u.CacheWriteTokens
+}
+
+func totalTok(u *model.TokenUsage) int64 {
+	if u == nil {
+		return 0
+	}
+	return u.InputTokens + u.OutputTokens + u.CacheReadTokens + u.CacheWriteTokens
+}
+
+func containsStr(ss []string, s string) bool {
+	for _, v := range ss {
+		if v == s {
+			return true
+		}
+	}
+	return false
+}
