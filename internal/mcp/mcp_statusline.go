@@ -76,8 +76,12 @@ func statuslinePlanLabel(repoRoot string) string {
 	switch strings.ToUpper(strings.TrimSpace(token.Plan)) {
 	case "PRO":
 		return "Pro"
-	case "TEAM", "ADMIN":
+	case "TEAM":
 		return "Team"
+	case "ADMIN":
+		return "Admin"
+	case "FREE":
+		return "Free"
 	default:
 		return ""
 	}
