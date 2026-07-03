@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 
@@ -76,10 +77,28 @@ func runInit(cmd *cobra.Command, _ []string) error {
 	})
 	if err != nil {
 		if errors.Is(err, internal.ErrNotGitRepo) {
-			printRunInsideRepo("repoguide repo init")
-			return nil
+			if !approve {
+				fmt.Print("This folder is not a Git repository. Run `git init` here and continue? [y/N]: ")
+				var answer string
+				fmt.Scanln(&answer)
+				if strings.ToLower(strings.TrimSpace(answer)) != "y" {
+					return nil
+				}
+			}
+			if out, gitErr := exec.Command("git", "init").CombinedOutput(); gitErr != nil {
+				return fmt.Errorf("git init failed: %w\n%s", gitErr, out)
+			}
+			result = RunWithSpinner("Initializing RepoGuide", func(_ func(current, total int, label string)) internal.InitResult {
+				result, err = internal.InitRepo(internal.InitOptions{
+					Force: force,
+					Mode:  mode,
+				})
+				return result
+			})
 		}
-		return err
+		if err != nil {
+			return err
+		}
 	}
 
 	if result.AlreadyInit {
