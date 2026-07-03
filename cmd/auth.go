@@ -223,7 +223,9 @@ func openBrowser(url string) {
 	case "linux":
 		cmd, args = "xdg-open", []string{url}
 	case "windows":
-		cmd, args = "cmd", []string{"/c", "start", url}
+		// empty title arg: cmd.exe's "start" treats the first quoted arg as the
+		// window title, so without it a quoted URL could be misread.
+		cmd, args = "cmd", []string{"/c", "start", "", url}
 	default:
 		return
 	}
