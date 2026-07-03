@@ -8,6 +8,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"unicode/utf8"
 
@@ -159,10 +160,14 @@ func runMCPServer(stdin io.Reader, stdout io.Writer, client *CloudClient) error 
 	}
 }
 
+// sessionIDPattern matches the UUID shape of real Claude session IDs, rejecting
+// glob metacharacters and path separators that could widen or escape the intended glob.
+var sessionIDPattern = regexp.MustCompile(`^[0-9a-fA-F-]{36}$`)
+
 // extractCurrentSessionPrompts returns the last ≤10 user+assistant text turns
 // from the active Claude session JSONL, each truncated to 300 runes. Best effort - returns nil on any error.
 func extractCurrentSessionPrompts(sessionID string) []string {
-	if sessionID == "" {
+	if !sessionIDPattern.MatchString(sessionID) {
 		return nil
 	}
 	matches, _ := filepath.Glob(filepath.Join(home(".claude", "projects"), "*", sessionID+".jsonl"))
