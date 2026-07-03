@@ -1,0 +1,87 @@
+name: Release
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - brew/VERSION
+  workflow_dispatch: {}
+
+permissions:
+  contents: read
+
+jobs:
+  tag:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    outputs:
+      tag: ${{ steps.compute.outputs.tag }}
+      created: ${{ steps.compute.outputs.created }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - id: compute
+        run: |
+          set -euo pipefail
+          VERSION="$(cat brew/VERSION)"
+          VERSION="${VERSION#v}"
+          TAG="v$VERSION"
+
+          if [[ ! "$VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+(-[A-Za-z0-9.-]+)?$ ]]; then
+            echo "ERROR: brew/VERSION must look like 0.1.0 or 0.1.0-beta.1, got: $VERSION"
+            exit 1
+          fi
+
+          if git rev-parse "$TAG" >/dev/null 2>&1 || git ls-remote --tags origin "refs/tags/$TAG" | grep -q "$TAG"; then
+            echo "Tag $TAG already exists, skipping."
+            echo "created=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "created=true" >> "$GITHUB_OUTPUT"
+          fi
+          echo "tag=$TAG" >> "$GITHUB_OUTPUT"
+
+      - name: Create and push tag
+        if: steps.compute.outputs.created == 'true'
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git tag -a "${{ steps.compute.outputs.tag }}" -m "Release ${{ steps.compute.outputs.tag }}"
+          git push origin "${{ steps.compute.outputs.tag }}"
+
+  release:
+    needs: tag
+    if: needs.tag.outputs.created == 'true'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      # go.mod has `replace github.com/repoguide/repoguide-core => ../repoguide-core`,
+      # a relative path that only exists in the local umbrella layout. Recreate it
+      # here by checking out repoguide-core as a sibling directory.
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.tag.outputs.tag }}
+          fetch-depth: 0
+          path: repoguide-cli
+
+      # repoguide-core is public, so no token is needed to check it out.
+      - uses: actions/checkout@v4
+        with:
+          repository: repoguide-dev/repoguide-core
+          path: repoguide-core
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: repoguide-cli/go.mod
+
+      - uses: goreleaser/goreleaser-action@v6
+        with:
+          version: latest
+          args: release --config brew/.goreleaser.yaml --clean
+          workdir: repoguide-cli
+        env:
+          GITHUB_TOKEN: ${{ secrets.RELEASES_REPO_TOKEN }}
+          HOMEBREW_TAP_GITHUB_TOKEN: ${{ secrets.HOMEBREW_TAP_GITHUB_TOKEN }}

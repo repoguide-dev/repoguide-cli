@@ -1,0 +1,51 @@
+version: 2
+
+project_name: repoguide
+
+before:
+  hooks:
+    - go mod tidy
+
+builds:
+  - id: repoguide
+    main: .
+    binary: repoguide
+    ldflags:
+      - -s -w -X github.com/repoguide/repoguide-cli/cmd.Version={{.Version}}
+    env:
+      - CGO_ENABLED=0
+    goos:
+      - darwin
+      - linux
+      - windows
+    goarch:
+      - amd64
+      - arm64
+    ignore:
+      - goos: windows
+        goarch: arm64
+
+archives:
+  - id: repoguide
+    name_template: "repoguide_{{ .Version }}_{{ .Os }}_{{ .Arch }}"
+    format_overrides:
+      - goos: windows
+        formats: [zip]
+
+checksum:
+  name_template: "checksums.txt"
+
+release:
+  github:
+    owner: repoguide-dev
+    name: repoguide-releases
+
+homebrew_casks:
+  - name: repoguide
+    repository:
+      owner: repoguide-dev
+      name: homebrew-tap
+      token: "{{ .Env.HOMEBREW_TAP_GITHUB_TOKEN }}"
+    directory: Casks
+    homepage: https://repoguide.dev
+    description: "Replay and learn from your AI coding sessions"
