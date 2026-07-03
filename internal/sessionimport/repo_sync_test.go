@@ -77,6 +77,64 @@ func TestCloudClientSkipsWithoutToken(t *testing.T) {
 	}
 }
 
+func TestCloudClientRejectsUnverifiedBackendHost(t *testing.T) {
+	client := CloudClient{BaseURL: "https://example.com", Token: "test-token"}
+	err := client.RegisterRepo("repo_123", "/tmp/project")
+	if err == nil {
+		t.Fatal("RegisterRepo returned nil error")
+	}
+	if !strings.Contains(err.Error(), "host is not allowed") {
+		t.Fatalf("error = %q, want host rejection", err)
+	}
+}
+
+func TestCloudClientRejectsUnexpectedRequestPath(t *testing.T) {
+	client := CloudClient{BaseURL: "https://repoguide.dev", Token: "test-token"}
+	if _, err := client.newRequest(http.MethodGet, "https://example.com/api/repos/repo_123", nil); err == nil {
+		t.Fatal("absolute URL path should be rejected")
+	}
+	if _, err := client.newRequest(http.MethodGet, "/api/admin/repos", nil); err == nil {
+		t.Fatal("unexpected backend path should be rejected")
+	}
+}
+
+func TestCloudClientRejectsRedirectToUnverifiedHost(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		http.Redirect(w, r, "https://example.com/api/limits", http.StatusFound)
+	}))
+	defer server.Close()
+
+	client := CloudClient{BaseURL: server.URL, Token: "test-token"}
+	_, err := client.GetLimits()
+	if err == nil {
+		t.Fatal("GetLimits returned nil error")
+	}
+	if !strings.Contains(err.Error(), "host is not allowed") {
+		t.Fatalf("error = %q, want redirect host rejection", err)
+	}
+}
+
+func TestCloudClientEscapesMCPSearchQuery(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/api/repos/repo_123/mcp/search" {
+			t.Fatalf("path = %s, want /api/repos/repo_123/mcp/search", r.URL.Path)
+		}
+		if got := r.URL.Query().Get("topic_id"); got != "topic&1" {
+			t.Fatalf("topic_id = %q, want escaped value round trip", got)
+		}
+		if got := r.URL.Query().Get("query"); got != "hello world & tests" {
+			t.Fatalf("query = %q, want escaped value round trip", got)
+		}
+		_ = json.NewEncoder(w).Encode(MCPSearchContext{})
+	}))
+	defer server.Close()
+
+	client := CloudClient{BaseURL: server.URL, Token: "test-token"}
+	if _, err := client.GetMCPSearchContext("repo_123", "topic&1", "hello world & tests"); err != nil {
+		t.Fatalf("GetMCPSearchContext returned error: %v", err)
+	}
+}
+
 func TestCloudClientAnalyzeTimeout(t *testing.T) {
 	client := CloudClient{}
 	if got := client.httpClient().Timeout; got != defaultBackendTimeout {
@@ -88,8 +146,16 @@ func TestCloudClientAnalyzeTimeout(t *testing.T) {
 
 	custom := &http.Client{Timeout: 3 * time.Second}
 	client = CloudClient{Client: custom}
-	if got := client.analyzeHTTPClient(); got != custom {
-		t.Fatal("analyzeHTTPClient should reuse custom client")
+	gotClient := client.analyzeHTTPClient()
+	if gotClient == custom {
+		t.Fatal("analyzeHTTPClient should wrap custom client with backend redirect validation")
+	}
+	if gotClient.Timeout != custom.Timeout {
+		t.Fatalf("custom client timeout = %v, want %v", gotClient.Timeout, custom.Timeout)
+	}
+	req := httptest.NewRequest(http.MethodGet, "https://example.com/api/limits", nil)
+	if err := gotClient.CheckRedirect(req, nil); err == nil {
+		t.Fatal("custom client redirect policy should reject unverified hosts")
 	}
 }
 
@@ -210,5 +276,70 @@ func TestCloudClientUploadRepoEventsReturnsBackendError(t *testing.T) {
 	}
 	if !strings.Contains(err.Error(), "invalid events zip") {
 		t.Fatalf("error = %q, want backend message", err)
+	}
+}
+
+func TestSanitizeEventLogForUploadRespectsRawPromptsFalse(t *testing.T) {
+	homeDir := t.TempDir()
+	t.Setenv("HOME", homeDir)
+	if err := writeJSON(filepath.Join(RepoGuideDir(), "config.json"), GlobalConfig{
+		Privacy: PrivacyDefaults{RawPrompts: false},
+	}); err != nil {
+		t.Fatalf("write global config: %v", err)
+	}
+
+	log := SessionEventLog{Events: []SessionEvent{
+		{Kind: "prompt", Text: "token=sk-live-abcdefghijklmnopqrstuvwxyz"},
+		{Kind: "assistant_message", Text: "use password=hunter2"},
+	}}
+	data, err := json.Marshal(log)
+	if err != nil {
+		t.Fatalf("Marshal event log: %v", err)
+	}
+	out, err := sanitizeEventLogForUpload(data, RepoConfig{})
+	if err != nil {
+		t.Fatalf("sanitizeEventLogForUpload: %v", err)
+	}
+	var got SessionEventLog
+	if err := json.Unmarshal(out, &got); err != nil {
+		t.Fatalf("Unmarshal sanitized log: %v", err)
+	}
+	if got.Events[0].Text != "[redacted prompt]" {
+		t.Fatalf("prompt text = %q", got.Events[0].Text)
+	}
+	if got.Events[1].Text != "use password=[redacted]" {
+		t.Fatalf("assistant text = %q", got.Events[1].Text)
+	}
+}
+
+func TestSafeHintFilePathStaysInRepoAndAllowsOnlyTextMarkdown(t *testing.T) {
+	repoRoot := t.TempDir()
+	if err := os.WriteFile(filepath.Join(repoRoot, "README.md"), []byte("ok"), 0o644); err != nil {
+		t.Fatalf("WriteFile README: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(repoRoot, "notes.txt"), []byte("ok"), 0o644); err != nil {
+		t.Fatalf("WriteFile notes: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(repoRoot, "secret.json"), []byte("no"), 0o644); err != nil {
+		t.Fatalf("WriteFile json: %v", err)
+	}
+	outside := filepath.Join(filepath.Dir(repoRoot), "outside.md")
+	if err := os.WriteFile(outside, []byte("no"), 0o644); err != nil {
+		t.Fatalf("WriteFile outside: %v", err)
+	}
+	if err := os.Symlink(outside, filepath.Join(repoRoot, "linked.md")); err != nil {
+		t.Fatalf("Symlink: %v", err)
+	}
+
+	if _, ok := safeHintFilePath(repoRoot, "README.md"); !ok {
+		t.Fatal("README.md should be allowed")
+	}
+	if _, ok := safeHintFilePath(repoRoot, "notes.txt"); !ok {
+		t.Fatal("notes.txt should be allowed")
+	}
+	for _, name := range []string{"secret.json", "../outside.md", "/tmp/outside.md", "linked.md"} {
+		if path, ok := safeHintFilePath(repoRoot, name); ok {
+			t.Fatalf("%s resolved to %s, want rejected", name, path)
+		}
 	}
 }

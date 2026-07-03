@@ -4,7 +4,10 @@ import (
 	"bytes"
 	"encoding/json"
 	"fmt"
+	"io"
+	"net"
 	"net/http"
+	"net/url"
 	"os/exec"
 	"runtime"
 	"strings"
@@ -15,6 +18,8 @@ import (
 	"github.com/repoguide/repoguide-cli/internal/sessionimport"
 	"github.com/spf13/cobra"
 )
+
+var authHTTPClient = &http.Client{Timeout: time.Minute}
 
 func init() {
 	loginCmd.Flags().Bool("ci", false, "")
@@ -79,8 +84,12 @@ func passwordLogin(email, password string) error {
 	if email == "" || password == "" {
 		return fmt.Errorf("--email and --password are both required")
 	}
+	baseURL, err := validatedBackendURL()
+	if err != nil {
+		return err
+	}
 	body, _ := json.Marshal(map[string]string{"email": email, "password": password})
-	resp, err := http.Post(getBackendURL()+"/api/auth/login", "application/json", bytes.NewReader(body))
+	resp, err := postJSON(baseURL+"/api/auth/login", bytes.NewReader(body))
 	if err != nil {
 		return fmt.Errorf("cannot reach backend: %w", err)
 	}
@@ -97,7 +106,7 @@ func passwordLogin(email, password string) error {
 	if err := clientauth.Save(clientauth.Token{Token: r.Token, Email: email}); err != nil {
 		return fmt.Errorf("failed to save credentials: %w", err)
 	}
-	if updated, changed := refreshedAuthToken(getBackendURL(), clientauth.Token{Token: r.Token, Email: email}); changed {
+	if updated, changed := refreshedAuthToken(baseURL, clientauth.Token{Token: r.Token, Email: email}); changed {
 		_ = clientauth.Save(updated)
 	}
 	fmt.Printf("Logged in as %s\n", email)
@@ -130,9 +139,12 @@ func deviceFlow(mode string) error {
 
 // deviceLogin runs the device-code auth flow and saves credentials, without launching any TUI after.
 func deviceLogin(mode string) error {
-	baseURL := getBackendURL()
+	baseURL, err := validatedBackendURL()
+	if err != nil {
+		return err
+	}
 
-	resp, err := http.Post(baseURL+"/api/auth/device/start?mode="+mode, "application/json", bytes.NewBufferString("{}"))
+	resp, err := postJSON(baseURL+"/api/auth/device/start?mode="+mode, bytes.NewBufferString("{}"))
 	if err != nil {
 		return fmt.Errorf("cannot reach backend at %s: %w\n\nSet --backend-url or REPOGUIDE_BACKEND_URL", baseURL, err)
 	}
@@ -189,7 +201,7 @@ type tokenResp struct {
 
 func pollDeviceToken(baseURL, deviceCode string) (tokenResp, bool, error) {
 	body, _ := json.Marshal(map[string]string{"device_code": deviceCode})
-	resp, err := http.Post(baseURL+"/api/auth/device/token", "application/json", bytes.NewReader(body))
+	resp, err := postJSON(baseURL+"/api/auth/device/token", bytes.NewReader(body))
 	if err != nil {
 		return tokenResp{}, false, err
 	}
@@ -223,4 +235,37 @@ func getBackendURL() string {
 		return strings.TrimRight(u, "/")
 	}
 	return "http://localhost:8082"
+}
+
+func postJSON(url string, body io.Reader) (*http.Response, error) {
+	req, err := http.NewRequest(http.MethodPost, url, body)
+	if err != nil {
+		return nil, err
+	}
+	req.Header.Set("Content-Type", "application/json")
+	return authHTTPClient.Do(req)
+}
+
+func validatedBackendURL() (string, error) {
+	raw := getBackendURL()
+	u, err := url.Parse(raw)
+	if err != nil || u.Scheme == "" || u.Host == "" {
+		return "", fmt.Errorf("invalid backend URL %q", raw)
+	}
+	if u.Scheme == "https" {
+		return raw, nil
+	}
+	if u.Scheme == "http" && isLoopbackBackendHost(u.Hostname()) {
+		return raw, nil
+	}
+	return "", fmt.Errorf("backend URL must use https, except loopback http for local development")
+}
+
+func isLoopbackBackendHost(host string) bool {
+	host = strings.Trim(strings.ToLower(host), "[]")
+	if host == "localhost" {
+		return true
+	}
+	ip := net.ParseIP(host)
+	return ip != nil && ip.IsLoopback()
 }
