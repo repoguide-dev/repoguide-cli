@@ -352,6 +352,7 @@ func handleMCPRequest(req mcpRequest, client *CloudClient) (mcpResponse, bool) {
 			}
 			return resp, true
 		}
+		markHookState(client.SessionID, "tool-used")
 		// repoguide_record_feedback creates its call and logs activity internally (to ensure
 		// mcp_call_id is set on the feedback before the feedback record is created).
 		if preCreatedCallID == "" {

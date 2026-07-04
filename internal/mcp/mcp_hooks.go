@@ -76,9 +76,9 @@ func RunPromptHook(stdin io.Reader, stdout io.Writer, cwd string) error {
 	return nil
 }
 
-// RunStopHook implements the Stop hook: once per session, if RepoGuide's
-// routing instruction was actually injected earlier in the session, block the
-// agent from stopping once so it can call repoguide_record_feedback first.
+// RunStopHook implements the Stop hook: once per session, if a RepoGuide MCP
+// tool was actually called earlier in the session, block the agent from
+// stopping once so it can call repoguide_record_feedback first.
 func RunStopHook(stdin io.Reader, stdout io.Writer, cwd string) error {
 	var payload hookStopPayload
 	if err := json.NewDecoder(stdin).Decode(&payload); err != nil {
@@ -92,7 +92,7 @@ func RunStopHook(stdin io.Reader, stdout io.Writer, cwd string) error {
 	if payload.StopHookActive || payload.SessionID == "" {
 		return nil
 	}
-	if !hookStateExists(payload.SessionID, "prompted") {
+	if !hookStateExists(payload.SessionID, "tool-used") {
 		return nil
 	}
 	if hookStateExists(payload.SessionID, "feedback-asked") {

@@ -61,7 +61,7 @@ func TestRunPromptHookNoopOutsideActivatedRepo(t *testing.T) {
 	}
 }
 
-func TestRunStopHookBlocksOnceAfterPrompt(t *testing.T) {
+func TestRunStopHookBlocksOnceAfterToolUse(t *testing.T) {
 	repo := setupHookTestRepo(t)
 
 	promptPayload := `{"session_id":"sess-1","prompt":"fix the login bug","cwd":"` + repo + `"}`
@@ -69,6 +69,7 @@ func TestRunStopHookBlocksOnceAfterPrompt(t *testing.T) {
 	if err := RunPromptHook(strings.NewReader(promptPayload), &discard, repo); err != nil {
 		t.Fatalf("RunPromptHook: %v", err)
 	}
+	markHookState("sess-1", "tool-used")
 
 	stopPayload := `{"session_id":"sess-1","cwd":"` + repo + `"}`
 	var out bytes.Buffer
@@ -107,6 +108,7 @@ func TestRunStopHookRespectsStopHookActive(t *testing.T) {
 	if err := RunPromptHook(strings.NewReader(promptPayload), &discard, repo); err != nil {
 		t.Fatalf("RunPromptHook: %v", err)
 	}
+	markHookState("sess-1", "tool-used")
 
 	stopPayload := `{"session_id":"sess-1","cwd":"` + repo + `","stop_hook_active":true}`
 	var out bytes.Buffer
@@ -115,6 +117,26 @@ func TestRunStopHookRespectsStopHookActive(t *testing.T) {
 	}
 	if out.String() != "" {
 		t.Fatalf("expected no output when stop_hook_active is true, got %q", out.String())
+	}
+}
+
+func TestRunStopHookNoopWhenToolNeverCalled(t *testing.T) {
+	repo := setupHookTestRepo(t)
+
+	promptPayload := `{"session_id":"sess-1","prompt":"fix the login bug","cwd":"` + repo + `"}`
+	var discard bytes.Buffer
+	if err := RunPromptHook(strings.NewReader(promptPayload), &discard, repo); err != nil {
+		t.Fatalf("RunPromptHook: %v", err)
+	}
+
+	// no repoguide tool was ever called this session; Stop must not demand feedback
+	stopPayload := `{"session_id":"sess-1","cwd":"` + repo + `"}`
+	var out bytes.Buffer
+	if err := RunStopHook(strings.NewReader(stopPayload), &out, repo); err != nil {
+		t.Fatalf("RunStopHook: %v", err)
+	}
+	if out.String() != "" {
+		t.Fatalf("expected no feedback request when no RepoGuide tool was called, got %q", out.String())
 	}
 }
 
