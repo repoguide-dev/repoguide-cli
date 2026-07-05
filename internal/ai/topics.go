@@ -20,7 +20,6 @@ const maxSessionPrompts = 20
 
 const (
 	topicModel         = "claude-sonnet-4-6"
-	maxTopics          = 12
 	minSessions        = 1
 	minTopicConfidence = 0.30
 )
@@ -42,7 +41,7 @@ type topicCandidate struct {
 	testTouchSignal     string
 }
 
-// DeriveTopicsAndGenerateContext derives up to 12 named TopicContext entries from a RepoAnalysisBundle.
+// DeriveTopicsAndGenerateContext derives named TopicContext entries from a RepoAnalysisBundle.
 func DeriveTopicsAndGenerateContext(ctx context.Context, bundle contracts.RepoAnalysisBundle) ([]model.TopicContext, Usage, error) {
 	candidates := buildCandidates(bundle)
 	candidates = filterAndRank(candidates)
@@ -397,9 +396,6 @@ func filterAndRank(candidates []topicCandidate) []topicCandidate {
 	sort.Slice(candidates, func(i, j int) bool {
 		return topicScore(candidates[i]) > topicScore(candidates[j])
 	})
-	if len(candidates) > maxTopics {
-		candidates = candidates[:maxTopics]
-	}
 	return candidates
 }
 

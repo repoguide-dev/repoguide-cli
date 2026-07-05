@@ -211,6 +211,7 @@ type lineBucket struct {
 // lineBuckets is intentionally fine-grained — empty buckets are skipped at render
 // time, so this only adds resolution where session volume actually supports it.
 var lineBuckets = []lineBucket{
+	{"0 (no edits)", -1}, // matched by the total==0 special case, never by max
 	{"1-5", 5},
 	{"6-20", 20},
 	{"21-50", 50},
@@ -223,6 +224,9 @@ var lineBuckets = []lineBucket{
 
 func lineBucketLabel(m internal.SessionMetrics) string {
 	total := m.LinesAdded + m.LinesRemoved
+	if total == 0 {
+		return lineBuckets[0].label
+	}
 	for _, b := range lineBuckets {
 		if b.max != 0 && total <= b.max {
 			return b.label

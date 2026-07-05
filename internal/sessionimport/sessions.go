@@ -127,7 +127,7 @@ type sessionSource struct {
 	paths    []string
 }
 
-const sessionIndexVersion = 2
+const sessionIndexVersion = 3
 
 func SupportedSessionAgents() []string {
 	return []string{"codex", "claude", "cursor", "opencode", "copilot", "gemini"}
@@ -869,6 +869,7 @@ func readCodexSession(path string, indexByID map[string]codexIndexEntry) (Sessio
 		Agent: "codex",
 		Path:  path,
 	}
+	pendingRepoGuideCalls := map[string]bool{}
 	if info, err := os.Stat(path); err == nil {
 		session.Timestamp = info.ModTime()
 	}
@@ -913,13 +914,20 @@ func readCodexSession(path string, indexByID map[string]codexIndexEntry) (Sessio
 			}
 		case "response_item":
 			var payload struct {
-				Type string `json:"type"`
-				Name string `json:"name"`
+				Type   string          `json:"type"`
+				Name   string          `json:"name"`
+				CallID string          `json:"call_id"`
+				Output json.RawMessage `json:"output"`
 			}
-			if err := json.Unmarshal(env.Payload, &payload); err == nil &&
-				payload.Type == "function_call" &&
-				isRepoGuideUnderstandTaskToolName(payload.Name) {
-				session.UsedRepoGuide = true
+			if err := json.Unmarshal(env.Payload, &payload); err == nil {
+				switch {
+				case payload.Type == "function_call" && isRepoGuideUnderstandTaskToolName(payload.Name) && payload.CallID != "":
+					pendingRepoGuideCalls[payload.CallID] = true
+				case payload.Type == "function_call_output" && pendingRepoGuideCalls[payload.CallID]:
+					if repoGuideResultHasExperience(toolResultText(payload.Output)) {
+						session.UsedRepoGuide = true
+					}
+				}
 			}
 		}
 
@@ -960,6 +968,7 @@ func readClaudeSession(path string) (SessionSummary, error) {
 		Path:  path,
 		ID:    strings.TrimSuffix(filepath.Base(path), filepath.Ext(path)),
 	}
+	pendingRepoGuideCalls := map[string]bool{}
 	if info, err := os.Stat(path); err == nil {
 		session.Timestamp = info.ModTime()
 	}
@@ -1002,12 +1011,37 @@ func readClaudeSession(path string) (SessionSummary, error) {
 					Content []struct {
 						Type string `json:"type"`
 						Name string `json:"name"`
+						ID   string `json:"id"`
 					} `json:"content"`
 				} `json:"message"`
 			}
 			if err := json.Unmarshal(line, &payload); err == nil {
 				for _, item := range payload.Message.Content {
-					if item.Type == "tool_use" && isRepoGuideUnderstandTaskToolName(item.Name) {
+					if item.Type == "tool_use" && isRepoGuideUnderstandTaskToolName(item.Name) && item.ID != "" {
+						pendingRepoGuideCalls[item.ID] = true
+					}
+				}
+			}
+		case "user":
+			if session.UsedRepoGuide || len(pendingRepoGuideCalls) == 0 {
+				break
+			}
+			var payload struct {
+				Message struct {
+					Content []struct {
+						Type      string          `json:"type"`
+						ToolUseID string          `json:"tool_use_id"`
+						IsError   bool            `json:"is_error"`
+						Content   json.RawMessage `json:"content"`
+					} `json:"content"`
+				} `json:"message"`
+			}
+			if err := json.Unmarshal(line, &payload); err == nil {
+				for _, item := range payload.Message.Content {
+					if item.Type != "tool_result" || !pendingRepoGuideCalls[item.ToolUseID] || item.IsError {
+						continue
+					}
+					if repoGuideResultHasExperience(toolResultText(item.Content)) {
 						session.UsedRepoGuide = true
 						break
 					}
@@ -1182,6 +1216,47 @@ func displayAgentName(agent string) string {
 	default:
 		return agent
 	}
+}
+
+// toolResultText flattens a tool_result content field (plain string, or a list
+// of {type: "text", text} blocks) into one string.
+func toolResultText(raw json.RawMessage) string {
+	if len(raw) == 0 {
+		return ""
+	}
+	var s string
+	if err := json.Unmarshal(raw, &s); err == nil {
+		return s
+	}
+	var blocks []struct {
+		Text string `json:"text"`
+	}
+	if err := json.Unmarshal(raw, &blocks); err == nil {
+		parts := make([]string, 0, len(blocks))
+		for _, b := range blocks {
+			parts = append(parts, b.Text)
+		}
+		return strings.Join(parts, "\n")
+	}
+	return string(raw)
+}
+
+// repoGuideResultHasExperience reports whether a repoguide_get_repo_experience
+// tool result carried topic-specific guidance — the topic-list disambiguation
+// response and errors don't count as "used RepoGuide".
+func repoGuideResultHasExperience(text string) bool {
+	text = strings.TrimSpace(text)
+	if text == "" {
+		return false
+	}
+	if strings.Contains(text, "Task maps to multiple topics") {
+		return false
+	}
+	// ponytail: substring match on the known error prefix; parse structured errors if formats multiply
+	if strings.Contains(text, "understand-task failed") {
+		return false
+	}
+	return true
 }
 
 func isRepoGuideUnderstandTaskToolName(name string) bool {
