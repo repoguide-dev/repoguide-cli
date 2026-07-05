@@ -351,6 +351,7 @@ func sessionAnalysisLines(artifacts sessionimport.SessionArtifacts) []string {
 		fmt.Sprintf("  Tool calls: %d", artifacts.Analysis.Metrics.ToolCallCount),
 		fmt.Sprintf("  Read files: %d", artifacts.Analysis.Metrics.ReadFileCount),
 		fmt.Sprintf("  Edited files: %d", artifacts.Analysis.Metrics.EditedFileCount),
+		fmt.Sprintf("  Lines added/removed: +%d/-%d", artifacts.Analysis.Metrics.LinesAdded, artifacts.Analysis.Metrics.LinesRemoved),
 	)
 	m := artifacts.Analysis.Metrics
 	if usage := m.TokenUsage; usage != nil {
@@ -512,8 +513,8 @@ func cachedAnalysisLines(analysis internal.SessionAnalysis, styled bool) []strin
 	}
 
 	m := analysis.Metrics
-	summary := fmt.Sprintf("%d events  •  %d prompts  •  %d tools  •  %d reads  •  %d edits",
-		m.EventCount, m.UserPromptCount, m.ToolCallCount, m.ReadFileCount, m.EditedFileCount)
+	summary := fmt.Sprintf("%d events  •  %d prompts  •  %d tools  •  %d reads  •  %d edits  •  +%d/-%d lines",
+		m.EventCount, m.UserPromptCount, m.ToolCallCount, m.ReadFileCount, m.EditedFileCount, m.LinesAdded, m.LinesRemoved)
 
 	lines := []string{
 		head("Analysis"),

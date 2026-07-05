@@ -37,22 +37,24 @@ type SessionEventLog struct {
 }
 
 type SessionEvent struct {
-	Index       int               `json:"index"`
-	Timestamp   string            `json:"timestamp,omitempty"`
-	Kind        string            `json:"kind"`
-	Role        string            `json:"role,omitempty"`
-	Text        string            `json:"text,omitempty"`
-	Model       string            `json:"model,omitempty"`
-	ToolName    string            `json:"toolName,omitempty"`
-	ToolCallID  string            `json:"toolCallId,omitempty"`
-	IsError     bool              `json:"isError,omitempty"`
-	TokenUsage  *TokenUsage       `json:"tokenUsage,omitempty"`
-	ReadPaths   []string          `json:"readPaths,omitempty"`
-	WritePaths  []string          `json:"writePaths,omitempty"`
-	Command     []string          `json:"command,omitempty"`
-	CommandText string            `json:"commandText,omitempty"`
-	SearchQuery string            `json:"searchQuery,omitempty"`
-	Metadata    map[string]string `json:"metadata,omitempty"`
+	Index        int               `json:"index"`
+	Timestamp    string            `json:"timestamp,omitempty"`
+	Kind         string            `json:"kind"`
+	Role         string            `json:"role,omitempty"`
+	Text         string            `json:"text,omitempty"`
+	Model        string            `json:"model,omitempty"`
+	ToolName     string            `json:"toolName,omitempty"`
+	ToolCallID   string            `json:"toolCallId,omitempty"`
+	IsError      bool              `json:"isError,omitempty"`
+	TokenUsage   *TokenUsage       `json:"tokenUsage,omitempty"`
+	ReadPaths    []string          `json:"readPaths,omitempty"`
+	WritePaths   []string          `json:"writePaths,omitempty"`
+	Command      []string          `json:"command,omitempty"`
+	CommandText  string            `json:"commandText,omitempty"`
+	SearchQuery  string            `json:"searchQuery,omitempty"`
+	LinesAdded   int               `json:"linesAdded,omitempty"`
+	LinesRemoved int               `json:"linesRemoved,omitempty"`
+	Metadata     map[string]string `json:"metadata,omitempty"`
 }
 
 type TokenUsage struct {
@@ -103,6 +105,8 @@ type SessionMetrics struct {
 	ToolCallCount         int               `json:"toolCallCount"`
 	ReadFileCount         int               `json:"readFileCount"`
 	EditedFileCount       int               `json:"editedFileCount"`
+	LinesAdded            int               `json:"linesAdded,omitempty"`
+	LinesRemoved          int               `json:"linesRemoved,omitempty"`
 	ReadFiles             []string          `json:"readFiles,omitempty"`
 	EditedFiles           []string          `json:"editedFiles,omitempty"`
 	ReadFileCounts        map[string]int    `json:"readFileCounts,omitempty"`

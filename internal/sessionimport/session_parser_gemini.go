@@ -199,7 +199,7 @@ func buildGeminiSessionEvents(path string) ([]SessionEvent, error) {
 					ToolName:  call.Name,
 					Model:     entry.Model,
 				}
-				event.ReadPaths, event.WritePaths, event.Command, event.CommandText = parseGeminiToolInput(call.Name, call.Args)
+				event.ReadPaths, event.WritePaths, event.Command, event.CommandText, event.LinesAdded, event.LinesRemoved = parseGeminiToolInput(call.Name, call.Args)
 				event.SearchQuery = parseGeminiSearchQuery(call.Name, call.Args)
 				events = append(events, event)
 
@@ -236,29 +236,30 @@ func buildGeminiSessionEvents(path string) ([]SessionEvent, error) {
 	return events, nil
 }
 
-func parseGeminiToolInput(toolName string, raw json.RawMessage) ([]string, []string, []string, string) {
+func parseGeminiToolInput(toolName string, raw json.RawMessage) ([]string, []string, []string, string, int, int) {
 	var input map[string]any
 	if err := json.Unmarshal(raw, &input); err != nil {
-		return nil, nil, nil, ""
+		return nil, nil, nil, "", 0, 0
 	}
 
 	switch toolName {
 	case "read_file":
-		return normalizePaths([]string{toString(input["file_path"])}), nil, nil, ""
+		return normalizePaths([]string{toString(input["file_path"])}), nil, nil, "", 0, 0
 	case "write_file":
 		path := toString(input["file_path"])
-		return nil, normalizePaths([]string{path}), nil, ""
+		return nil, normalizePaths([]string{path}), nil, "", countLines(toString(input["content"])), 0
 	case "replace":
 		path := toString(input["file_path"])
-		return normalizePaths([]string{path}), normalizePaths([]string{path}), nil, ""
+		added, removed := diffLineCounts(toString(input["old_string"]), toString(input["new_string"]))
+		return normalizePaths([]string{path}), normalizePaths([]string{path}), nil, "", added, removed
 	case "list_directory":
-		return normalizePaths([]string{toString(input["dir_path"])}), nil, nil, ""
+		return normalizePaths([]string{toString(input["dir_path"])}), nil, nil, "", 0, 0
 	case "run_shell_command":
 		cmd := toString(input["command"])
 		readPaths, writePaths := derivePathsFromShell(cmd)
-		return readPaths, writePaths, []string{"bash", "-lc", cmd}, cmd
+		return readPaths, writePaths, []string{"bash", "-lc", cmd}, cmd, 0, 0
 	default:
-		return nil, nil, nil, ""
+		return nil, nil, nil, "", 0, 0
 	}
 }
 

@@ -19,22 +19,23 @@ func renderOverviewBlock(s *sessionStat) string {
 	if s.inputTokens+s.outputTokens > 0 {
 		lines = append(lines, fmt.Sprintf("  Total tokens:  %s", formatTokensK(s.inputTokens+s.outputTokens)))
 	}
-	if s.costUSD > 0 {
-		avgCost := fmt.Sprintf("  Avg cost:      $%.2f/session", safeDivide(s.costUSD, float64(s.sessions)))
+	b := exclusiveBaseline(s)
+	if b.costUSD > 0 {
+		avgCost := fmt.Sprintf("  Avg cost:      $%.2f/session", safeDivide(b.costUSD, float64(b.sessions)))
 		avgCost += hCmp(s, func(h *sessionStat) string {
 			return fmt.Sprintf("$%.2f/session", safeDivide(h.costUSD, float64(h.sessions)))
 		})
 		lines = append(lines, avgCost)
 	}
-	if total := s.inputTokens + s.outputTokens; total > 0 {
-		avgTok := fmt.Sprintf("  Avg tokens:    %s/session", fmtTokensShort(safeDivideInt(total, s.sessions)))
+	if total := b.inputTokens + b.outputTokens; total > 0 {
+		avgTok := fmt.Sprintf("  Avg tokens:    %s/session", fmtTokensShort(safeDivideInt(total, b.sessions)))
 		avgTok += hCmp(s, func(h *sessionStat) string {
 			return fmtTokensShort(safeDivideInt(h.inputTokens+h.outputTokens, h.sessions)) + "/session"
 		})
 		lines = append(lines, avgTok)
 	}
-	if s.edits > 0 && s.costUSD > 0 {
-		avgCostPerEdit := fmt.Sprintf("  Avg cost/edit: $%.2f", safeDivide(s.costUSD, float64(s.edits)))
+	if b.edits > 0 && b.costUSD > 0 {
+		avgCostPerEdit := fmt.Sprintf("  Avg cost/edit: $%.2f", safeDivide(b.costUSD, float64(b.edits)))
 		avgCostPerEdit += hCmp(s, func(h *sessionStat) string {
 			if h.edits == 0 {
 				return ""
@@ -96,21 +97,69 @@ func printGroupTable(byLabel string, order []string, groups map[string]*sessionS
 	fmt.Println(renderGroupTableBlock(byLabel, order, groups))
 }
 
+// renderLinesBucketTableBlock compares RepoGuide-used vs. not-used sessions within each
+// lines-edited bucket, so cost/exploration differences aren't confounded by task size.
+func renderLinesBucketTableBlock(order []string, groups map[string]*sessionStat) string {
+	cols := []tableColumn{
+		{title: "Lines edited", width: 14},
+		{title: "Used", width: 5},
+		{title: "N", width: 5},
+		{title: "Avg cost", width: 9},
+		{title: "Avg pre-edit", width: 12},
+		{title: "Avg reads", width: 10},
+	}
+	lines := []string{renderTableHeader(cols)}
+	sepWidth := (len(cols) - 1) * 2
+	for _, c := range cols {
+		sepWidth += c.width
+	}
+	lines = append(lines, muted.Render(strings.Repeat("─", sepWidth)))
+	for _, bucket := range order {
+		g := groups[bucket]
+		for _, cohort := range []struct {
+			label string
+			stat  *sessionStat
+		}{
+			{"no", g.nonRepoguide},
+			{"yes", g.repoguide},
+		} {
+			if cohort.stat == nil || cohort.stat.sessions == 0 {
+				continue
+			}
+			s := cohort.stat
+			lines = append(lines, renderTableRow(cols,
+				bucket,
+				cohort.label,
+				strconv.Itoa(s.sessions),
+				formatCost(safeDivide(s.costUSD, float64(s.sessions))),
+				fmtAvg(s.preEditToolCalls, s.sessions),
+				fmtAvg(s.preEditReads, s.sessions),
+			))
+		}
+	}
+	return strings.Join(lines, "\n")
+}
+
+func printLinesBucketTable(order []string, groups map[string]*sessionStat) {
+	fmt.Println(renderLinesBucketTableBlock(order, groups))
+}
+
 func renderContextBlock(s *sessionStat) string {
 	if s.peakContextCount == 0 {
 		return ""
 	}
-	avgPeak := s.peakContextSum / int64(s.peakContextCount)
+	b := exclusiveBaseline(s)
+	avgPeak := b.peakContextSum / int64(b.peakContextCount)
 	peakLine := fmt.Sprintf("  Avg peak input:  ~%s", formatTokensK(avgPeak))
 	if h := s.repoguide; h != nil && h.peakContextCount > 0 {
 		peakLine += fmt.Sprintf("  (~%s with RepoGuide)", formatTokensK(h.peakContextSum/int64(h.peakContextCount)))
 	}
 	lines := []string{headStyle.Render("Context"), peakLine}
-	if len(s.pressureCounts) > 0 {
+	if len(b.pressureCounts) > 0 {
 		levels := []string{"Low", "Medium", "High", "Critical"}
 		parts := make([]string, 0, len(levels))
 		for _, level := range levels {
-			if n := s.pressureCounts[level]; n > 0 {
+			if n := b.pressureCounts[level]; n > 0 {
 				parts = append(parts, fmt.Sprintf("%s %d", level, n))
 			}
 		}
@@ -155,25 +204,26 @@ func renderExplorationBlock(s *sessionStat) string {
 	if s.preEditToolCalls == 0 && s.preEditReads == 0 {
 		return ""
 	}
-	n := s.sessions
+	b := exclusiveBaseline(s)
+	n := b.sessions
 	lines := []string{
 		headStyle.Render("Before first edit"),
-		fmt.Sprintf("  Avg tool calls:  %s%s", fmtAvg(s.preEditToolCalls, n),
+		fmt.Sprintf("  Avg tool calls:  %s%s", fmtAvg(b.preEditToolCalls, n),
 			hCmp(s, func(h *sessionStat) string { return fmtAvg(h.preEditToolCalls, h.sessions) })),
-		fmt.Sprintf("  Avg files read:  %s%s", fmtAvg(s.preEditReads, n),
+		fmt.Sprintf("  Avg files read:  %s%s", fmtAvg(b.preEditReads, n),
 			hCmp(s, func(h *sessionStat) string { return fmtAvg(h.preEditReads, h.sessions) })),
-		fmt.Sprintf("  Avg searches:    %s%s", fmtAvg(s.preEditSearches, n),
+		fmt.Sprintf("  Avg searches:    %s%s", fmtAvg(b.preEditSearches, n),
 			hCmp(s, func(h *sessionStat) string { return fmtAvg(h.preEditSearches, h.sessions) })),
 	}
-	if pct := preEditTokenPct(s.preEditInputTokens, s.preEditOutputTokens, s.preEditBaseInputTokens, s.preEditBaseOutputTokens); pct != "-" {
+	if pct := preEditTokenPct(b.preEditInputTokens, b.preEditOutputTokens, b.preEditBaseInputTokens, b.preEditBaseOutputTokens); pct != "-" {
 		line := fmt.Sprintf("  Read token %%:    %s of all tokens", pct)
 		line += hCmp(s, func(h *sessionStat) string {
 			return preEditTokenPct(h.preEditInputTokens, h.preEditOutputTokens, h.preEditBaseInputTokens, h.preEditBaseOutputTokens)
 		})
 		lines = append(lines, line)
 	}
-	if s.preEditCostUSD > 0 {
-		costLine := fmt.Sprintf("  Avg cost:        $%.2f", safeDivide(s.preEditCostUSD, float64(n)))
+	if b.preEditCostUSD > 0 {
+		costLine := fmt.Sprintf("  Avg cost:        $%.2f", safeDivide(b.preEditCostUSD, float64(n)))
 		costLine += hCmp(s, func(h *sessionStat) string {
 			if h.preEditCostUSD <= 0 {
 				return ""
@@ -181,7 +231,7 @@ func renderExplorationBlock(s *sessionStat) string {
 			return fmt.Sprintf("$%.2f", safeDivide(h.preEditCostUSD, float64(h.sessions)))
 		})
 		lines = append(lines, costLine)
-		if pct := preEditCostPct(s.preEditCostUSD, s.costUSD); pct != "-" {
+		if pct := preEditCostPct(b.preEditCostUSD, b.costUSD); pct != "-" {
 			pctLine := fmt.Sprintf("  Avg cost %%:      %s of total", pct)
 			pctLine += hCmp(s, func(h *sessionStat) string {
 				return preEditCostPct(h.preEditCostUSD, h.costUSD)

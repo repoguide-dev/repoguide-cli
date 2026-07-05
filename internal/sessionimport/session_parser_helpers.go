@@ -114,6 +114,39 @@ func normalizePathToken(token string) string {
 	return cleaned
 }
 
+func countLines(s string) int {
+	s = strings.TrimRight(s, "\n")
+	if s == "" {
+		return 0
+	}
+	return strings.Count(s, "\n") + 1
+}
+
+// diffLineCounts gives a coarse added/removed line count for a whole-block replacement.
+// ponytail: block-level counts (whole old/new strings), not a real line-diff; upgrade to a
+// line-level diff (e.g. myers) if per-line precision matters.
+func diffLineCounts(oldStr, newStr string) (added, removed int) {
+	return countLines(newStr), countLines(oldStr)
+}
+
+// countPatchLines counts +/- content lines inside an apply_patch-style hunk body.
+func countPatchLines(command string) (added, removed int) {
+	if !strings.Contains(command, "apply_patch") {
+		return 0, 0
+	}
+	for _, line := range strings.Split(command, "\n") {
+		switch {
+		case strings.HasPrefix(line, "+++") || strings.HasPrefix(line, "---") || strings.HasPrefix(line, "***") || strings.HasPrefix(line, "@@"):
+			continue
+		case strings.HasPrefix(line, "+"):
+			added++
+		case strings.HasPrefix(line, "-"):
+			removed++
+		}
+	}
+	return added, removed
+}
+
 func normalizePaths(paths []string) []string {
 	set := map[string]struct{}{}
 	for _, path := range paths {

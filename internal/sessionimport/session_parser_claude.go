@@ -77,7 +77,7 @@ func buildClaudeSessionEvents(path string) ([]SessionEvent, error) {
 						ToolCallID: item.ID,
 						Model:      payload.Message.Model,
 					}
-					call.ReadPaths, call.WritePaths, call.Command, call.CommandText = parseClaudeToolInput(item.Name, item.Input)
+					call.ReadPaths, call.WritePaths, call.Command, call.CommandText, call.LinesAdded, call.LinesRemoved = parseClaudeToolInput(item.Name, item.Input)
 					call.SearchQuery = parseClaudeSearchQuery(item.Name, item.Input)
 					events = append(events, call)
 				}
@@ -134,28 +134,29 @@ func parseClaudeSearchQuery(toolName string, raw json.RawMessage) string {
 	return ""
 }
 
-func parseClaudeToolInput(toolName string, raw json.RawMessage) ([]string, []string, []string, string) {
+func parseClaudeToolInput(toolName string, raw json.RawMessage) ([]string, []string, []string, string, int, int) {
 	var input map[string]any
 	if err := json.Unmarshal(raw, &input); err != nil {
-		return nil, nil, nil, ""
+		return nil, nil, nil, "", 0, 0
 	}
 
 	switch toolName {
 	case "Read":
 		path := toString(input["file_path"])
-		return normalizePaths([]string{path}), nil, nil, ""
+		return normalizePaths([]string{path}), nil, nil, "", 0, 0
 	case "Write":
 		path := toString(input["file_path"])
-		return nil, normalizePaths([]string{path}), nil, ""
+		return nil, normalizePaths([]string{path}), nil, "", countLines(toString(input["content"])), 0
 	case "Edit":
 		path := toString(input["file_path"])
-		return normalizePaths([]string{path}), normalizePaths([]string{path}), nil, ""
+		added, removed := diffLineCounts(toString(input["old_string"]), toString(input["new_string"]))
+		return normalizePaths([]string{path}), normalizePaths([]string{path}), nil, "", added, removed
 	case "Bash":
 		cmd := toString(input["command"])
 		readPaths, writePaths := derivePathsFromShell(cmd)
-		return readPaths, writePaths, []string{"bash", "-lc", cmd}, cmd
+		return readPaths, writePaths, []string{"bash", "-lc", cmd}, cmd, 0, 0
 	default:
-		return nil, nil, nil, ""
+		return nil, nil, nil, "", 0, 0
 	}
 }
 

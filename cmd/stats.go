@@ -17,7 +17,7 @@ func init() {
 	statsCmd.Flags().BoolP("global", "g", false, "Show all repos grouped by repo (overrides --repo)")
 	statsCmd.Flags().Bool("all", false, "Alias for --global")
 	statsCmd.Flags().String("since", "30d", "Limit to sessions newer than duration (e.g. 7d, 30d, 90d, 24h)")
-	statsCmd.Flags().String("by", "", "Group by 'model', 'repo', or 'agent' (default: model; repo implies --global)")
+	statsCmd.Flags().String("by", "", "Group by 'model', 'repo', 'agent', or 'lines' (lines-edited buckets; default: model; repo implies --global)")
 	statsCmd.Flags().Bool("graph", false, "Interactive time-series graph")
 	_ = statsCmd.Flags().MarkHidden("all")
 	root.AddCommand(statsCmd)
@@ -43,8 +43,8 @@ func runStats(cmd *cobra.Command, _ []string) error {
 	graphFlag, _ := cmd.Flags().GetBool("graph")
 
 	byFlag = strings.ToLower(strings.TrimSpace(byFlag))
-	if byFlag != "" && byFlag != "model" && byFlag != "repo" && byFlag != "agent" {
-		return fmt.Errorf("--by must be 'model', 'repo', or 'agent'")
+	if byFlag != "" && byFlag != "model" && byFlag != "repo" && byFlag != "agent" && byFlag != "lines" {
+		return fmt.Errorf("--by must be 'model', 'repo', 'agent', or 'lines'")
 	}
 
 	isGlobal := globalFlag || allFlag || byFlag == "repo"
@@ -149,20 +149,30 @@ func runStats(cmd *cobra.Command, _ []string) error {
 
 	groups := map[string]*sessionStat{}
 	order := []string{}
+	lineGroups := map[string]*sessionStat{}
+	lineOrder := []string{}
 	for _, a := range analyzed {
 		if outlierPaths[a.summary.Path] {
 			continue
 		}
-		key := statsGroupKey(a.summary, byFlag)
+		key := statsGroupKey(a.summary, a.metrics, byFlag)
 		if _, exists := groups[key]; !exists {
 			groups[key] = &sessionStat{}
 			order = append(order, key)
 		}
 		groups[key].add(a.metrics, a.summary.UsedRepoGuide)
+
+		lineKey := lineBucketLabel(a.metrics)
+		if _, exists := lineGroups[lineKey]; !exists {
+			lineGroups[lineKey] = &sessionStat{}
+			lineOrder = append(lineOrder, lineKey)
+		}
+		lineGroups[lineKey].add(a.metrics, a.summary.UsedRepoGuide)
 	}
 	sort.Slice(order, func(i, j int) bool {
 		return groups[order[i]].sessions > groups[order[j]].sessions
 	})
+	sort.Slice(lineOrder, func(i, j int) bool { return lineBucketRank(lineOrder[i]) < lineBucketRank(lineOrder[j]) })
 
 	byLabel := strings.ToUpper(byFlag[:1]) + byFlag[1:]
 	titleText := fmt.Sprintf("RepoGuide Stats - %s - last %s", scope, sinceFlag)
@@ -171,13 +181,49 @@ func runStats(cmd *cobra.Command, _ []string) error {
 	fmt.Println()
 	printOverview(&total)
 	fmt.Println()
-	fmt.Printf("%s - avg per session\n", headStyle.Render("By "+byLabel))
-	fmt.Println()
 	printGroupTable(byLabel, order, groups)
+	if total.repoguide != nil && total.repoguide.sessions > 0 {
+		fmt.Println()
+		fmt.Printf("%s - RepoGuide vs. not, per bucket\n", headStyle.Render("By lines edited"))
+		fmt.Println()
+		printLinesBucketTable(lineOrder, lineGroups)
+	}
 	printContextBlock(&total)
 	printExplorationBlock(&total)
 	printOutliersBlock(outliers)
 	return nil
+}
+
+// lineBucketRank orders line-edit buckets from smallest to largest instead of by session count.
+func lineBucketRank(bucket string) int {
+	for i, b := range lineBuckets {
+		if b.label == bucket {
+			return i
+		}
+	}
+	return len(lineBuckets)
+}
+
+type lineBucket struct {
+	label string
+	max   int // 0 means unbounded
+}
+
+var lineBuckets = []lineBucket{
+	{"1-20", 20},
+	{"21-100", 100},
+	{"101-500", 500},
+	{"500+", 0},
+}
+
+func lineBucketLabel(m internal.SessionMetrics) string {
+	total := m.LinesAdded + m.LinesRemoved
+	for _, b := range lineBuckets {
+		if b.max != 0 && total <= b.max {
+			return b.label
+		}
+	}
+	return lineBuckets[len(lineBuckets)-1].label
 }
 
 // ── sessionStat ───────────────────────────────────────────────────────────────
@@ -203,10 +249,29 @@ type sessionStat struct {
 	peakContextSum          int64
 	peakContextCount        int
 	pressureCounts          map[string]int
-	repoguide               *sessionStat // sessions where repoguide was used
+	repoguide               *sessionStat // sessions where repoguide was used (subset of the total)
+	nonRepoguide            *sessionStat // sessions where repoguide was not used (disjoint from repoguide)
 }
 
 func (s *sessionStat) add(m internal.SessionMetrics, usedRepoGuide bool) {
+	s.addBase(m)
+	if usedRepoGuide {
+		if s.repoguide == nil {
+			s.repoguide = &sessionStat{}
+		}
+		s.repoguide.addBase(m)
+	} else {
+		if s.nonRepoguide == nil {
+			s.nonRepoguide = &sessionStat{}
+		}
+		s.nonRepoguide.addBase(m)
+	}
+}
+
+// addBase accumulates m into s without touching the repoguide/nonRepoguide
+// sub-cohorts — add() calls this once for the top-level total and once for
+// whichever sub-cohort the session belongs to.
+func (s *sessionStat) addBase(m internal.SessionMetrics) {
 	s.sessions++
 	s.costUSD += m.EstimatedCostUSD
 	s.prompts += m.UserPromptCount
@@ -241,17 +306,21 @@ func (s *sessionStat) add(m internal.SessionMetrics, usedRepoGuide bool) {
 			s.pressureCounts[cs.ContextPressure]++
 		}
 	}
-	if usedRepoGuide {
-		if s.repoguide == nil {
-			s.repoguide = &sessionStat{}
-		}
-		s.repoguide.add(m, false)
+}
+
+// exclusiveBaseline returns the non-RepoGuide cohort when both cohorts are present, so
+// "Overall" vs. "With RepoGuide" compares two disjoint sets instead of a subset vs. its
+// superset (which the subset is always inside of, biasing the comparison).
+func exclusiveBaseline(s *sessionStat) *sessionStat {
+	if s.repoguide != nil && s.repoguide.sessions > 0 && s.nonRepoguide != nil && s.nonRepoguide.sessions > 0 {
+		return s.nonRepoguide
 	}
+	return s
 }
 
 // ── small helpers ─────────────────────────────────────────────────────────────
 
-func statsGroupKey(s internal.SessionSummary, by string) string {
+func statsGroupKey(s internal.SessionSummary, m internal.SessionMetrics, by string) string {
 	switch by {
 	case "model":
 		return valueOrFallback(s.Model, "(unknown)")
@@ -259,6 +328,8 @@ func statsGroupKey(s internal.SessionSummary, by string) string {
 		return valueOrFallback(s.RepoName, "(no repo)")
 	case "agent":
 		return valueOrFallback(displayAgentName(s.Agent), "(unknown)")
+	case "lines":
+		return lineBucketLabel(m)
 	}
 	return ""
 }

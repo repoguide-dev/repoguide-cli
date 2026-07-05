@@ -99,6 +99,7 @@ func buildCodexSessionEvents(path string) ([]SessionEvent, error) {
 					event.CommandText = commandText
 					event.ReadPaths = readPaths
 					event.WritePaths = writePaths
+					event.LinesAdded, event.LinesRemoved = countPatchLines(commandText)
 				}
 				events = append(events, event)
 			case "function_call_output":

@@ -77,6 +77,8 @@ func AnalyzeSessionEventLog(eventLog SessionEventLog) SessionMetrics {
 			firstEditSeen = true
 			curBlockFirstEditSeen = true
 		}
+		metrics.LinesAdded += event.LinesAdded
+		metrics.LinesRemoved += event.LinesRemoved
 
 		var eventTime time.Time
 		if event.Timestamp != "" {
@@ -107,7 +109,7 @@ func AnalyzeSessionEventLog(eventLog SessionEventLog) SessionMetrics {
 				})
 				activeSearches = append(activeSearches, len(curBlock.Searches)-1)
 			}
-			if !firstEditSeen {
+			if !firstEditSeen && !isRepoGuideToolName(event.ToolName) {
 				exploration.ToolCallsBeforeFirstEdit++
 				if isSearchEvent(event) {
 					exploration.SearchesBeforeFirstEdit++
@@ -235,6 +237,12 @@ func AnalyzeSessionEventLog(eventLog SessionEventLog) SessionMetrics {
 
 	metrics.ContextStats = computeContextStats(eventLog.Events, metrics.TokenUsage)
 	return metrics
+}
+
+// isRepoGuideToolName excludes RepoGuide's own MCP calls from exploration counts —
+// calling the routing tool shouldn't itself count against the "tool calls before first edit" metric.
+func isRepoGuideToolName(name string) bool {
+	return strings.Contains(strings.ToLower(name), "repoguide")
 }
 
 func containsPath(paths []string, target string) bool {

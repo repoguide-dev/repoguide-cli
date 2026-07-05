@@ -205,7 +205,7 @@ func buildOpencodeSessionEvents(path string) ([]SessionEvent, error) {
 					ToolCallID: part.CallID,
 					Model:      msg.ModelID,
 				}
-				call.ReadPaths, call.WritePaths, call.Command, call.CommandText = parseOpencodeToolInput(part.Tool, state.Input)
+				call.ReadPaths, call.WritePaths, call.Command, call.CommandText, call.LinesAdded, call.LinesRemoved = parseOpencodeToolInput(part.Tool, state.Input)
 				call.SearchQuery = parseOpencodeSearchQuery(part.Tool, state.Input)
 				msgEvents = append(msgEvents, call)
 
@@ -264,28 +264,29 @@ func buildOpencodeSessionEvents(path string) ([]SessionEvent, error) {
 	return events, nil
 }
 
-func parseOpencodeToolInput(toolName string, raw json.RawMessage) ([]string, []string, []string, string) {
+func parseOpencodeToolInput(toolName string, raw json.RawMessage) ([]string, []string, []string, string, int, int) {
 	var input map[string]any
 	if err := json.Unmarshal(raw, &input); err != nil {
-		return nil, nil, nil, ""
+		return nil, nil, nil, "", 0, 0
 	}
 
 	switch toolName {
 	case "read":
 		path := toString(input["filePath"])
-		return normalizePaths([]string{path}), nil, nil, ""
+		return normalizePaths([]string{path}), nil, nil, "", 0, 0
 	case "write":
 		path := toString(input["filePath"])
-		return nil, normalizePaths([]string{path}), nil, ""
+		return nil, normalizePaths([]string{path}), nil, "", countLines(toString(input["content"])), 0
 	case "edit":
 		path := toString(input["filePath"])
-		return normalizePaths([]string{path}), normalizePaths([]string{path}), nil, ""
+		added, removed := diffLineCounts(toString(input["oldString"]), toString(input["newString"]))
+		return normalizePaths([]string{path}), normalizePaths([]string{path}), nil, "", added, removed
 	case "bash":
 		cmd := toString(input["command"])
 		readPaths, writePaths := derivePathsFromShell(cmd)
-		return readPaths, writePaths, []string{"bash", "-lc", cmd}, cmd
+		return readPaths, writePaths, []string{"bash", "-lc", cmd}, cmd, 0, 0
 	default:
-		return nil, nil, nil, ""
+		return nil, nil, nil, "", 0, 0
 	}
 }
 
