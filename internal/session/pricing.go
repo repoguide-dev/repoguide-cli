@@ -9,6 +9,8 @@ var modelPricingByName = map[string]ModelPricing{
 	"claude-opus-4-7":        {Model: "claude-opus-4-7", InputPerMTokUSD: 5.00, OutputPerMTokUSD: 25.00, CacheReadPerMTokUSD: 0.50, CacheWritePerMTokUSD: 6.25, ContextWindowTokens: 200_000},
 	"claude-opus-4-6":        {Model: "claude-opus-4-6", InputPerMTokUSD: 5.00, OutputPerMTokUSD: 25.00, CacheReadPerMTokUSD: 0.50, CacheWritePerMTokUSD: 6.25, ContextWindowTokens: 200_000},
 	"claude-opus-4-5":        {Model: "claude-opus-4-5", InputPerMTokUSD: 5.00, OutputPerMTokUSD: 25.00, CacheReadPerMTokUSD: 0.50, CacheWritePerMTokUSD: 6.25, ContextWindowTokens: 200_000},
+	// ponytail: intro pricing ($2/$10) through 2026-08-31, sticker is $3/$15 after
+	"claude-sonnet-5":        {Model: "claude-sonnet-5", InputPerMTokUSD: 2.00, OutputPerMTokUSD: 10.00, CacheReadPerMTokUSD: 0.20, CacheWritePerMTokUSD: 2.50, ContextWindowTokens: 1_000_000},
 	"claude-sonnet-4-6":      {Model: "claude-sonnet-4-6", InputPerMTokUSD: 3.00, OutputPerMTokUSD: 15.00, CacheReadPerMTokUSD: 0.30, CacheWritePerMTokUSD: 3.75, ContextWindowTokens: 200_000},
 	"claude-sonnet-4-5":      {Model: "claude-sonnet-4-5", InputPerMTokUSD: 3.00, OutputPerMTokUSD: 15.00, CacheReadPerMTokUSD: 0.30, CacheWritePerMTokUSD: 3.75, ContextWindowTokens: 200_000},
 	"claude-haiku-4-5":       {Model: "claude-haiku-4-5", InputPerMTokUSD: 1.00, OutputPerMTokUSD: 5.00, CacheReadPerMTokUSD: 0.10, CacheWritePerMTokUSD: 1.25, ContextWindowTokens: 200_000},

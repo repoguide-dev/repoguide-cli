@@ -7,7 +7,7 @@ import (
 	"github.com/repoguide/repoguide-core/model"
 )
 
-const bundleVersion = 9
+const bundleVersion = 10
 
 type sessionMetrics struct {
 	UserPromptCount  int

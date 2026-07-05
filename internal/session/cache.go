@@ -6,7 +6,7 @@ import (
 	"time"
 )
 
-const SessionAnalysisVersion = 9
+const SessionAnalysisVersion = 10
 
 func LoadOrBuild(eventLog SessionEventLog, path string) (SessionAnalysis, bool, error) {
 	if cached, err := Read(path); err == nil {
