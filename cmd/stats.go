@@ -189,8 +189,6 @@ func runStats(cmd *cobra.Command, _ []string) error {
 		fmt.Println()
 		printLinesBucketTable(lineOrder, lineGroups)
 	}
-	printContextBlock(&total)
-	printExplorationBlock(&total)
 	printOutliersBlock(outliers)
 	return nil
 }
@@ -236,27 +234,21 @@ func lineBucketLabel(m internal.SessionMetrics) string {
 // ── sessionStat ───────────────────────────────────────────────────────────────
 
 type sessionStat struct {
-	sessions            int
-	costUSD             float64
-	prompts             int
-	toolCalls           int
-	edits               int
-	reads               int
-	linesEdited         int64
-	inputTokens         int64
-	outputTokens        int64
-	preEditToolCalls    int
-	preEditReads        int
-	preEditSearches     int
-	preEditCostUSD      float64
-	preEditInputTokens  int64
-	preEditOutputTokens int64
+	sessions     int
+	costUSD      float64
+	edits        int
+	linesEdited  int64
+	inputTokens  int64
+	outputTokens int64
+	// per-session $/10-lines samples, for a median that one expensive
+	// tiny-diff session can't distort the way a ratio of sums can
+	costPer10LinesSamples []float64
+	preEditToolCalls      int
+	preEditInputTokens    int64
+	preEditOutputTokens   int64
 	// total tokens only for sessions that have pre-edit token data (used for %)
 	preEditBaseInputTokens  int64
 	preEditBaseOutputTokens int64
-	peakContextSum          int64
-	peakContextCount        int
-	pressureCounts          map[string]int
 	repoguide               *sessionStat // sessions where repoguide was used (subset of the total)
 	nonRepoguide            *sessionStat // sessions where repoguide was not used (disjoint from repoguide)
 }
@@ -282,20 +274,17 @@ func (s *sessionStat) add(m internal.SessionMetrics, usedRepoGuide bool) {
 func (s *sessionStat) addBase(m internal.SessionMetrics) {
 	s.sessions++
 	s.costUSD += m.EstimatedCostUSD
-	s.prompts += m.UserPromptCount
-	s.toolCalls += m.ToolCallCount
 	s.edits += m.EditedFileCount
-	s.reads += m.ReadFileCount
 	s.linesEdited += int64(m.LinesAdded + m.LinesRemoved)
+	if lines := m.LinesAdded + m.LinesRemoved; lines > 0 && m.EstimatedCostUSD > 0 {
+		s.costPer10LinesSamples = append(s.costPer10LinesSamples, m.EstimatedCostUSD/float64(lines)*10)
+	}
 	if m.TokenUsage != nil {
 		s.inputTokens += m.TokenUsage.InputTokens
 		s.outputTokens += m.TokenUsage.OutputTokens
 	}
 	if es := m.ExplorationStats; es != nil {
 		s.preEditToolCalls += es.ToolCallsBeforeFirstEdit
-		s.preEditReads += es.FilesReadBeforeFirstEdit
-		s.preEditSearches += es.SearchesBeforeFirstEdit
-		s.preEditCostUSD += es.CostBeforeFirstEditUSD
 		if es.TokensBeforeFirstEdit != nil {
 			s.preEditInputTokens += es.TokensBeforeFirstEdit.InputTokens
 			s.preEditOutputTokens += es.TokensBeforeFirstEdit.OutputTokens
@@ -305,16 +294,22 @@ func (s *sessionStat) addBase(m internal.SessionMetrics) {
 			}
 		}
 	}
-	if cs := m.ContextStats; cs != nil && cs.MaxEffectiveInputTokens > 0 {
-		s.peakContextSum += cs.MaxEffectiveInputTokens
-		s.peakContextCount++
-		if s.pressureCounts == nil {
-			s.pressureCounts = map[string]int{}
-		}
-		if cs.ContextPressure != "" {
-			s.pressureCounts[cs.ContextPressure]++
-		}
+}
+
+// medianCostPer10Lines is robust to a single expensive tiny-diff session, which
+// a ratio of sums (total cost / total lines) is not.
+func (s *sessionStat) medianCostPer10Lines() (float64, bool) {
+	// ponytail: <3 samples is too few for a meaningful median; render as "-"
+	if len(s.costPer10LinesSamples) < 3 {
+		return 0, false
 	}
+	v := append([]float64(nil), s.costPer10LinesSamples...)
+	sort.Float64s(v)
+	mid := len(v) / 2
+	if len(v)%2 == 0 {
+		return (v[mid-1] + v[mid]) / 2, true
+	}
+	return v[mid], true
 }
 
 // exclusiveBaseline returns the non-RepoGuide cohort when both cohorts are present, so
@@ -382,14 +377,6 @@ func preEditTokenPct(preEditIn, preEditOut, totalIn, totalOut int64) string {
 		return "-"
 	}
 	return fmt.Sprintf("%.0f%%", float64(preEdit)/float64(total)*100)
-}
-
-// preEditCostPct returns the pre-edit cost share as "45%" or "-" when unavailable.
-func preEditCostPct(preEditCost, totalCost float64) string {
-	if totalCost == 0 || preEditCost == 0 {
-		return "-"
-	}
-	return fmt.Sprintf("%.0f%%", preEditCost/totalCost*100)
 }
 
 // fmtTokensShort renders token counts compactly for table cells: 1.2M, 34k, 891.

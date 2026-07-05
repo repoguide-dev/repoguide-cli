@@ -55,11 +55,7 @@ func renderGroupTableBlock(byLabel string, order []string, groups map[string]*se
 	cols := []tableColumn{
 		{title: byLabel, width: 22},
 		{title: "Sessions", width: 8},
-		{title: "Cost", width: 9},
 		{title: "Avg cost", width: 9},
-		{title: "Prompts", width: 7},
-		{title: "Tools", width: 6},
-		{title: "Reads", width: 6},
 		{title: "Edits", width: 6},
 		{title: "Tokens/session", width: 14},
 		{title: "Pre-edit %", width: 10},
@@ -80,11 +76,7 @@ func renderGroupTableBlock(byLabel string, order []string, groups map[string]*se
 		lines = append(lines, renderTableRow(cols,
 			label,
 			strconv.Itoa(n),
-			formatCost(g.costUSD),
 			formatCost(safeDivide(g.costUSD, float64(n))),
-			fmtAvg(g.prompts, n),
-			fmtAvg(g.toolCalls, n),
-			fmtAvg(g.reads, n),
 			fmtAvg(g.edits, n),
 			fmtTokensShort(safeDivideInt(g.inputTokens+g.outputTokens, n)),
 			preEditTokenPct(g.preEditInputTokens, g.preEditOutputTokens, g.preEditBaseInputTokens, g.preEditBaseOutputTokens),
@@ -104,9 +96,8 @@ func renderLinesBucketTableBlock(order []string, groups map[string]*sessionStat)
 	cols := []tableColumn{
 		{title: "Lines edited", width: 14},
 		{title: "N", width: 12},
-		{title: "$/10 lines", width: 22},
+		{title: "Median $/10 lines", width: 22},
 		{title: "Pre-edit calls", width: 16},
-		{title: "Reads", width: 12},
 	}
 	lines := []string{renderTableHeader(cols)}
 	sepWidth := (len(cols) - 1) * 2
@@ -130,17 +121,17 @@ func renderLinesBucketTableBlock(order []string, groups map[string]*sessionStat)
 			return fmt.Sprintf("%s (%s)", without, with)
 		}
 		costPer10Lines := func(s *sessionStat) string {
-			if s.linesEdited == 0 {
+			m, ok := s.medianCostPer10Lines()
+			if !ok {
 				return "-"
 			}
-			return formatCost(s.costUSD / float64(s.linesEdited) * 10)
+			return formatCost(m)
 		}
 		lines = append(lines, renderTableRow(cols,
 			bucket,
 			withoutWith(strconv.Itoa(no.sessions), strconv.Itoa(yes.sessions)),
 			withoutWith(costPer10Lines(no), costPer10Lines(yes)),
 			withoutWith(fmtAvg(no.preEditToolCalls, no.sessions), fmtAvg(yes.preEditToolCalls, yes.sessions)),
-			withoutWith(fmtAvg(no.preEditReads, no.sessions), fmtAvg(yes.preEditReads, yes.sessions)),
 		))
 	}
 	return strings.Join(lines, "\n")
@@ -148,51 +139,6 @@ func renderLinesBucketTableBlock(order []string, groups map[string]*sessionStat)
 
 func printLinesBucketTable(order []string, groups map[string]*sessionStat) {
 	fmt.Println(renderLinesBucketTableBlock(order, groups))
-}
-
-func renderContextBlock(s *sessionStat) string {
-	if s.peakContextCount == 0 {
-		return ""
-	}
-	b := exclusiveBaseline(s)
-	avgPeak := b.peakContextSum / int64(b.peakContextCount)
-	peakLine := fmt.Sprintf("  Avg peak input:  ~%s", formatTokensK(avgPeak))
-	if h := s.repoguide; h != nil && h.peakContextCount > 0 {
-		peakLine += fmt.Sprintf("  (~%s with RepoGuide)", formatTokensK(h.peakContextSum/int64(h.peakContextCount)))
-	}
-	lines := []string{headStyle.Render("Context"), peakLine}
-	if len(b.pressureCounts) > 0 {
-		levels := []string{"Low", "Medium", "High", "Critical"}
-		parts := make([]string, 0, len(levels))
-		for _, level := range levels {
-			if n := b.pressureCounts[level]; n > 0 {
-				parts = append(parts, fmt.Sprintf("%s %d", level, n))
-			}
-		}
-		if len(parts) > 0 {
-			pressureLine := fmt.Sprintf("  Pressure:        %s", strings.Join(parts, "  •  "))
-			if h := s.repoguide; h != nil && len(h.pressureCounts) > 0 {
-				hParts := make([]string, 0, len(levels))
-				for _, level := range levels {
-					if n := h.pressureCounts[level]; n > 0 {
-						hParts = append(hParts, fmt.Sprintf("%s %d", level, n))
-					}
-				}
-				if len(hParts) > 0 {
-					pressureLine += fmt.Sprintf("  (%s with RepoGuide)", strings.Join(hParts, "  •  "))
-				}
-			}
-			lines = append(lines, pressureLine)
-		}
-	}
-	return strings.Join(lines, "\n")
-}
-
-func printContextBlock(s *sessionStat) {
-	if block := renderContextBlock(s); block != "" {
-		fmt.Println()
-		fmt.Println(block)
-	}
 }
 
 func hCmp(s *sessionStat, field func(*sessionStat) string) string {
@@ -204,55 +150,6 @@ func hCmp(s *sessionStat, field func(*sessionStat) string) string {
 		return ""
 	}
 	return fmt.Sprintf("  (%s with RepoGuide)", v)
-}
-
-func renderExplorationBlock(s *sessionStat) string {
-	if s.preEditToolCalls == 0 && s.preEditReads == 0 {
-		return ""
-	}
-	b := exclusiveBaseline(s)
-	n := b.sessions
-	lines := []string{
-		headStyle.Render("Before first edit"),
-		fmt.Sprintf("  Avg tool calls:  %s%s", fmtAvg(b.preEditToolCalls, n),
-			hCmp(s, func(h *sessionStat) string { return fmtAvg(h.preEditToolCalls, h.sessions) })),
-		fmt.Sprintf("  Avg files read:  %s%s", fmtAvg(b.preEditReads, n),
-			hCmp(s, func(h *sessionStat) string { return fmtAvg(h.preEditReads, h.sessions) })),
-		fmt.Sprintf("  Avg searches:    %s%s", fmtAvg(b.preEditSearches, n),
-			hCmp(s, func(h *sessionStat) string { return fmtAvg(h.preEditSearches, h.sessions) })),
-	}
-	if pct := preEditTokenPct(b.preEditInputTokens, b.preEditOutputTokens, b.preEditBaseInputTokens, b.preEditBaseOutputTokens); pct != "-" {
-		line := fmt.Sprintf("  Read token %%:    %s of all tokens", pct)
-		line += hCmp(s, func(h *sessionStat) string {
-			return preEditTokenPct(h.preEditInputTokens, h.preEditOutputTokens, h.preEditBaseInputTokens, h.preEditBaseOutputTokens)
-		})
-		lines = append(lines, line)
-	}
-	if b.preEditCostUSD > 0 {
-		costLine := fmt.Sprintf("  Avg cost:        $%.2f", safeDivide(b.preEditCostUSD, float64(n)))
-		costLine += hCmp(s, func(h *sessionStat) string {
-			if h.preEditCostUSD <= 0 {
-				return ""
-			}
-			return fmt.Sprintf("$%.2f", safeDivide(h.preEditCostUSD, float64(h.sessions)))
-		})
-		lines = append(lines, costLine)
-		if pct := preEditCostPct(b.preEditCostUSD, b.costUSD); pct != "-" {
-			pctLine := fmt.Sprintf("  Avg cost %%:      %s of total", pct)
-			pctLine += hCmp(s, func(h *sessionStat) string {
-				return preEditCostPct(h.preEditCostUSD, h.costUSD)
-			})
-			lines = append(lines, pctLine)
-		}
-	}
-	return strings.Join(lines, "\n")
-}
-
-func printExplorationBlock(s *sessionStat) {
-	if block := renderExplorationBlock(s); block != "" {
-		fmt.Println()
-		fmt.Println(block)
-	}
 }
 
 type statsOutlier struct {
