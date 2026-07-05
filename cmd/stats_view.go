@@ -99,14 +99,18 @@ func printGroupTable(byLabel string, order []string, groups map[string]*sessionS
 
 // renderLinesBucketTableBlock compares RepoGuide-used vs. not-used sessions within each
 // lines-edited bucket, so cost/exploration differences aren't confounded by task size.
+// Each metric gets a no/yes column pair so the two cohorts read side by side.
 func renderLinesBucketTableBlock(order []string, groups map[string]*sessionStat) string {
 	cols := []tableColumn{
 		{title: "Lines edited", width: 14},
-		{title: "Used", width: 5},
-		{title: "N", width: 5},
-		{title: "Avg cost", width: 9},
-		{title: "Avg pre-edit", width: 12},
-		{title: "Avg reads", width: 10},
+		{title: "N (no)", width: 7},
+		{title: "N (yes)", width: 7},
+		{title: "Cost (no)", width: 10},
+		{title: "Cost (yes)", width: 10},
+		{title: "Pre-edit (no)", width: 13},
+		{title: "Pre-edit (yes)", width: 14},
+		{title: "Reads (no)", width: 11},
+		{title: "Reads (yes)", width: 11},
 	}
 	lines := []string{renderTableHeader(cols)}
 	sepWidth := (len(cols) - 1) * 2
@@ -116,26 +120,29 @@ func renderLinesBucketTableBlock(order []string, groups map[string]*sessionStat)
 	lines = append(lines, muted.Render(strings.Repeat("─", sepWidth)))
 	for _, bucket := range order {
 		g := groups[bucket]
-		for _, cohort := range []struct {
-			label string
-			stat  *sessionStat
-		}{
-			{"no", g.nonRepoguide},
-			{"yes", g.repoguide},
-		} {
-			if cohort.stat == nil || cohort.stat.sessions == 0 {
-				continue
-			}
-			s := cohort.stat
-			lines = append(lines, renderTableRow(cols,
-				bucket,
-				cohort.label,
-				strconv.Itoa(s.sessions),
-				formatCost(safeDivide(s.costUSD, float64(s.sessions))),
-				fmtAvg(s.preEditToolCalls, s.sessions),
-				fmtAvg(s.preEditReads, s.sessions),
-			))
+		no, yes := g.nonRepoguide, g.repoguide
+		if (no == nil || no.sessions == 0) && (yes == nil || yes.sessions == 0) {
+			continue
 		}
+		if no == nil {
+			no = &sessionStat{}
+		}
+		if yes == nil {
+			yes = &sessionStat{}
+		}
+		row := func(n int) string {
+			if n == 0 {
+				return "-"
+			}
+			return strconv.Itoa(n)
+		}
+		lines = append(lines, renderTableRow(cols,
+			bucket,
+			row(no.sessions), row(yes.sessions),
+			formatCost(safeDivide(no.costUSD, float64(no.sessions))), formatCost(safeDivide(yes.costUSD, float64(yes.sessions))),
+			fmtAvg(no.preEditToolCalls, no.sessions), fmtAvg(yes.preEditToolCalls, yes.sessions),
+			fmtAvg(no.preEditReads, no.sessions), fmtAvg(yes.preEditReads, yes.sessions),
+		))
 	}
 	return strings.Join(lines, "\n")
 }
