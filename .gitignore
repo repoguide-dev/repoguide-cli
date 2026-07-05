@@ -9,3 +9,4 @@ repoguide
 .pycache
 .env
 .env.prod
+dist/

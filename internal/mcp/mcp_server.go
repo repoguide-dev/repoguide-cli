@@ -352,11 +352,13 @@ func handleMCPRequest(req mcpRequest, client *CloudClient) (mcpResponse, bool) {
 			}
 			return resp, true
 		}
-		markHookState(client.SessionID, "tool-used")
+		repoID, repoPath := resolveRepoContext(stringValue(params.Arguments["repo_id"]), stringValue(params.Arguments["repo_path"]))
+		// Keyed by repo, not session: Claude Code never sends a session id on
+		// MCP initialize, so the Stop hook correlates via marker mtimes instead.
+		markHookState(repoID, "tool-used")
 		// repoguide_record_feedback creates its call and logs activity internally (to ensure
 		// mcp_call_id is set on the feedback before the feedback record is created).
 		if preCreatedCallID == "" {
-			repoID, repoPath := resolveRepoContext(stringValue(params.Arguments["repo_id"]), stringValue(params.Arguments["repo_path"]))
 			record := MCPActivityRecord{
 				Repo:     repoPath,
 				Command:  params.Name,

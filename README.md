@@ -1,6 +1,6 @@
 # RepoGuide CLI
 
-RepoGuide learns from past coding-agent sessions in a repo (what was searched, edited, tested, and fixed) and gives the next agent (Claude Code, Codex CLI, or any MCP-compatible agent) the files, workflows, tests, and pitfalls it needs before it starts searching from scratch. `repoguide-cli` is the `repoguide` command-line application, and can run against the hosted backend or fully offline on your own machine.
+Your repo doesn't need more context. Your agents need experience. Not search - that's where code is. Not RAG - that's what looks similar. Not CLAUDE.md - that's what someone wrote once. RepoGuide learns from past coding-agent sessions in a repo (what was searched, edited, tested, and fixed) and gives the next agent (Claude Code, Codex CLI, or any MCP-compatible agent) the files, workflows, tests, and pitfalls it needs before it starts searching from scratch. `repoguide-cli` is the `repoguide` command-line application, and can run against the hosted backend or fully offline on your own machine.
 
 Website: [repoguide.dev](https://repoguide.dev)
 

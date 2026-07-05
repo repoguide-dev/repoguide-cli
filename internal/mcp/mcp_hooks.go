@@ -76,6 +76,22 @@ func RunPromptHook(stdin io.Reader, stdout io.Writer, cwd string) error {
 	return nil
 }
 
+// repoToolUsedThisSession reports whether a RepoGuide MCP tool was called in
+// this repo since this session's first prompt. Claude Code never forwards the
+// hook session_id to the MCP server, so tool use is marked per repo and
+// correlated with the session by comparing marker mtimes.
+func repoToolUsedThisSession(repoID, sessionID string) bool {
+	used, err := os.Stat(hookStateFile(repoID, "tool-used"))
+	if err != nil {
+		return false
+	}
+	prompted, err := os.Stat(hookStateFile(sessionID, "prompted"))
+	if err != nil {
+		return false
+	}
+	return !used.ModTime().Before(prompted.ModTime())
+}
+
 // RunStopHook implements the Stop hook: once per session, if a RepoGuide MCP
 // tool was actually called earlier in the session, block the agent from
 // stopping once so it can call repoguide_record_feedback first.
@@ -92,14 +108,14 @@ func RunStopHook(stdin io.Reader, stdout io.Writer, cwd string) error {
 	if payload.StopHookActive || payload.SessionID == "" {
 		return nil
 	}
-	if !hookStateExists(payload.SessionID, "tool-used") {
+	repoID, err := GitRepoID(cwd)
+	if err != nil || repoID == "" {
+		return nil
+	}
+	if !repoToolUsedThisSession(repoID, payload.SessionID) {
 		return nil
 	}
 	if hookStateExists(payload.SessionID, "feedback-asked") {
-		return nil
-	}
-	repoID, err := GitRepoID(cwd)
-	if err != nil || repoID == "" {
 		return nil
 	}
 	markHookState(payload.SessionID, "feedback-asked")

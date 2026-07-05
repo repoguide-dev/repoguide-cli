@@ -7,6 +7,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 )
 
 func setupHookTestRepo(t *testing.T) string {
@@ -69,7 +70,7 @@ func TestRunStopHookBlocksOnceAfterToolUse(t *testing.T) {
 	if err := RunPromptHook(strings.NewReader(promptPayload), &discard, repo); err != nil {
 		t.Fatalf("RunPromptHook: %v", err)
 	}
-	markHookState("sess-1", "tool-used")
+	markHookState("repo_one", "tool-used")
 
 	stopPayload := `{"session_id":"sess-1","cwd":"` + repo + `"}`
 	var out bytes.Buffer
@@ -108,7 +109,7 @@ func TestRunStopHookRespectsStopHookActive(t *testing.T) {
 	if err := RunPromptHook(strings.NewReader(promptPayload), &discard, repo); err != nil {
 		t.Fatalf("RunPromptHook: %v", err)
 	}
-	markHookState("sess-1", "tool-used")
+	markHookState("repo_one", "tool-used")
 
 	stopPayload := `{"session_id":"sess-1","cwd":"` + repo + `","stop_hook_active":true}`
 	var out bytes.Buffer
@@ -137,6 +138,33 @@ func TestRunStopHookNoopWhenToolNeverCalled(t *testing.T) {
 	}
 	if out.String() != "" {
 		t.Fatalf("expected no feedback request when no RepoGuide tool was called, got %q", out.String())
+	}
+}
+
+func TestRunStopHookNoopWhenToolUsedBeforeThisSession(t *testing.T) {
+	repo := setupHookTestRepo(t)
+
+	// tool-used marker left over from an earlier session in the same repo
+	markHookState("repo_one", "tool-used")
+	stale := hookStateFile("repo_one", "tool-used")
+	old := time.Now().Add(-time.Hour)
+	if err := os.Chtimes(stale, old, old); err != nil {
+		t.Fatalf("Chtimes: %v", err)
+	}
+
+	promptPayload := `{"session_id":"sess-1","prompt":"fix the login bug","cwd":"` + repo + `"}`
+	var discard bytes.Buffer
+	if err := RunPromptHook(strings.NewReader(promptPayload), &discard, repo); err != nil {
+		t.Fatalf("RunPromptHook: %v", err)
+	}
+
+	stopPayload := `{"session_id":"sess-1","cwd":"` + repo + `"}`
+	var out bytes.Buffer
+	if err := RunStopHook(strings.NewReader(stopPayload), &out, repo); err != nil {
+		t.Fatalf("RunStopHook: %v", err)
+	}
+	if out.String() != "" {
+		t.Fatalf("expected no feedback request for a stale tool-used marker, got %q", out.String())
 	}
 }
 
