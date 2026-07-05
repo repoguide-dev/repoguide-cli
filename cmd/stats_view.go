@@ -99,18 +99,14 @@ func printGroupTable(byLabel string, order []string, groups map[string]*sessionS
 
 // renderLinesBucketTableBlock compares RepoGuide-used vs. not-used sessions within each
 // lines-edited bucket, so cost/exploration differences aren't confounded by task size.
-// Each metric gets a no/yes column pair so the two cohorts read side by side.
+// Each metric is one column formatted as "without (with)".
 func renderLinesBucketTableBlock(order []string, groups map[string]*sessionStat) string {
 	cols := []tableColumn{
 		{title: "Lines edited", width: 14},
-		{title: "N (no)", width: 7},
-		{title: "N (yes)", width: 7},
-		{title: "Cost (no)", width: 10},
-		{title: "Cost (yes)", width: 10},
-		{title: "Pre-edit (no)", width: 13},
-		{title: "Pre-edit (yes)", width: 14},
-		{title: "Reads (no)", width: 11},
-		{title: "Reads (yes)", width: 11},
+		{title: "N", width: 12},
+		{title: "$/10 lines", width: 22},
+		{title: "Pre-edit calls", width: 16},
+		{title: "Reads", width: 12},
 	}
 	lines := []string{renderTableHeader(cols)}
 	sepWidth := (len(cols) - 1) * 2
@@ -130,18 +126,21 @@ func renderLinesBucketTableBlock(order []string, groups map[string]*sessionStat)
 		if yes == nil {
 			yes = &sessionStat{}
 		}
-		row := func(n int) string {
-			if n == 0 {
+		withoutWith := func(without, with string) string {
+			return fmt.Sprintf("%s (%s)", without, with)
+		}
+		costPer10Lines := func(s *sessionStat) string {
+			if s.linesEdited == 0 {
 				return "-"
 			}
-			return strconv.Itoa(n)
+			return formatCost(s.costUSD / float64(s.linesEdited) * 10)
 		}
 		lines = append(lines, renderTableRow(cols,
 			bucket,
-			row(no.sessions), row(yes.sessions),
-			formatCost(safeDivide(no.costUSD, float64(no.sessions))), formatCost(safeDivide(yes.costUSD, float64(yes.sessions))),
-			fmtAvg(no.preEditToolCalls, no.sessions), fmtAvg(yes.preEditToolCalls, yes.sessions),
-			fmtAvg(no.preEditReads, no.sessions), fmtAvg(yes.preEditReads, yes.sessions),
+			withoutWith(strconv.Itoa(no.sessions), strconv.Itoa(yes.sessions)),
+			withoutWith(costPer10Lines(no), costPer10Lines(yes)),
+			withoutWith(fmtAvg(no.preEditToolCalls, no.sessions), fmtAvg(yes.preEditToolCalls, yes.sessions)),
+			withoutWith(fmtAvg(no.preEditReads, no.sessions), fmtAvg(yes.preEditReads, yes.sessions)),
 		))
 	}
 	return strings.Join(lines, "\n")

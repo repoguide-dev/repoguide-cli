@@ -185,6 +185,7 @@ func runStats(cmd *cobra.Command, _ []string) error {
 	if total.repoguide != nil && total.repoguide.sessions > 0 {
 		fmt.Println()
 		fmt.Printf("%s - RepoGuide vs. not, per bucket\n", headStyle.Render("By lines edited"))
+		fmt.Println(muted.Render("  each cell: without RepoGuide (with RepoGuide)"))
 		fmt.Println()
 		printLinesBucketTable(lineOrder, lineGroups)
 	}
@@ -209,11 +210,17 @@ type lineBucket struct {
 	max   int // 0 means unbounded
 }
 
+// lineBuckets is intentionally fine-grained — empty buckets are skipped at render
+// time, so this only adds resolution where session volume actually supports it.
 var lineBuckets = []lineBucket{
-	{"1-20", 20},
-	{"21-100", 100},
-	{"101-500", 500},
-	{"500+", 0},
+	{"1-5", 5},
+	{"6-20", 20},
+	{"21-50", 50},
+	{"51-100", 100},
+	{"101-250", 250},
+	{"251-500", 500},
+	{"501-1000", 1000},
+	{"1000+", 0},
 }
 
 func lineBucketLabel(m internal.SessionMetrics) string {
@@ -235,6 +242,7 @@ type sessionStat struct {
 	toolCalls           int
 	edits               int
 	reads               int
+	linesEdited         int64
 	inputTokens         int64
 	outputTokens        int64
 	preEditToolCalls    int
@@ -278,6 +286,7 @@ func (s *sessionStat) addBase(m internal.SessionMetrics) {
 	s.toolCalls += m.ToolCallCount
 	s.edits += m.EditedFileCount
 	s.reads += m.ReadFileCount
+	s.linesEdited += int64(m.LinesAdded + m.LinesRemoved)
 	if m.TokenUsage != nil {
 		s.inputTokens += m.TokenUsage.InputTokens
 		s.outputTokens += m.TokenUsage.OutputTokens
