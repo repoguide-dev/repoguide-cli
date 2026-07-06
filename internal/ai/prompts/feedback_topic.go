@@ -27,6 +27,8 @@ Rules:
 - Use the suggested name as a strong hint; refine it to 3-6 Title Case words only if it is vague or inaccurate.
 - Do not invent files not present in the session data or file_labels.
 - Prefer developer intent from the user prompts over file paths.
+- Session prompts are in order: later prompts often correct or narrow earlier ones. A correction is strong evidence for known_workflows or avoid_wasting_time.
+- Session commands are shell commands the agent actually ran; failed_commands are the ones that errored. Use commands (never invented ones) for tests.commands and known_workflows; use failed_commands as avoid_wasting_time evidence when the failure looks repeatable rather than task-specific.
 - Keep output compact - it will be injected directly into an agent's context window.
 
 Return only valid JSON. No markdown, no comments.
@@ -43,11 +45,13 @@ Field rules:
 // FeedbackTopicSessionData is the session summary passed to BuildFeedbackTopicPrompt.
 // It is serialized as JSON and embedded in the prompt.
 type FeedbackTopicSessionData struct {
-	Prompts     []string            `json:"prompts"`
-	ToolCalls   []string            `json:"tool_calls,omitempty"`
-	EditedFiles []string            `json:"edited_files,omitempty"`
-	ReadFiles   []string            `json:"read_files,omitempty"`
-	FileLabels  map[string][]string `json:"file_labels,omitempty"`
+	Prompts        []string            `json:"prompts"`
+	ToolCalls      []string            `json:"tool_calls,omitempty"`
+	Commands       []string            `json:"commands,omitempty"`
+	FailedCommands []string            `json:"failed_commands,omitempty"`
+	EditedFiles    []string            `json:"edited_files,omitempty"`
+	ReadFiles      []string            `json:"read_files,omitempty"`
+	FileLabels     map[string][]string `json:"file_labels,omitempty"`
 }
 
 // ExistingTopicSummary is the compact representation of an existing topic passed to the prompt.

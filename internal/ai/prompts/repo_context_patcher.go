@@ -7,7 +7,7 @@ Given:
 - one repo_id
 - the current repo context document
 - pending feedback with low ratings (≤3 stars)
-- optional session data: user prompts and edited files per feedback
+- optional session data: user prompts, edited files, and git/apply_patch diff snippets per feedback
 
 ` + RepoContextStructure + `
 
@@ -18,6 +18,7 @@ Do NOT change the # Agent Context headline sentence unless clearly wrong.
 Do NOT duplicate existing rows.
 Prefer noop_duplicate if the context already contains the learning.
 Only patch durable guidance evidenced across multiple feedbacks.
+Use diff snippets as supporting evidence in addition to feedback recommendations; prefer observed code changes over speculation when they clarify what was actually fixed.
 
 Allowed ops:
 - add_row: add a bullet to a section

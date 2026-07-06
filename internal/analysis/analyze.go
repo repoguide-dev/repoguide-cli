@@ -2,6 +2,7 @@ package analysis
 
 import (
 	"regexp"
+	"sort"
 	"strings"
 	"time"
 
@@ -200,7 +201,84 @@ func analyzeSessionEvents(events []model.SessionEvent) sessionMetrics {
 		_ = lastTC
 	}
 
+	metrics.Commands = extractSessionCommands(events)
 	return metrics
+}
+
+const maxSessionCommands = 15
+
+// commandSkipWords are leading words of commands that carry no reusable signal:
+// navigation/inspection plus search commands (search behavior is modeled
+// separately via searchTrace).
+var commandSkipWords = map[string]bool{
+	"cd": true, "ls": true, "pwd": true, "cat": true, "echo": true,
+	"head": true, "tail": true, "which": true, "env": true, "printenv": true,
+	"grep": true, "rg": true, "ag": true, "ack": true, "find": true,
+}
+
+// extractSessionCommands collects deduplicated shell commands run during a
+// session and links each run to its tool_result (via toolCallId) to count
+// failures. Failed commands are durable "this didn't work here" evidence;
+// repeated successful commands are validation-workflow evidence.
+func extractSessionCommands(events []model.SessionEvent) []commandStat {
+	pending := map[string]string{} // toolCallId -> command text
+	stats := map[string]*commandStat{}
+	var order []string
+
+	for _, ev := range events {
+		switch ev.Kind {
+		case "tool_call":
+			text := normalizeCommandText(ev.CommandText)
+			if text == "" {
+				continue
+			}
+			st := stats[text]
+			if st == nil {
+				st = &commandStat{Text: text}
+				stats[text] = st
+				order = append(order, text)
+			}
+			st.Runs++
+			if ev.ToolCallID != "" {
+				pending[ev.ToolCallID] = text
+			}
+		case "tool_result":
+			if !ev.IsError || ev.ToolCallID == "" {
+				continue
+			}
+			if text, ok := pending[ev.ToolCallID]; ok {
+				stats[text].Failures++
+			}
+		}
+	}
+
+	out := make([]commandStat, 0, len(order))
+	for _, text := range order {
+		out = append(out, *stats[text])
+	}
+	if len(out) > maxSessionCommands {
+		// keep the most-run commands; stable to preserve session order on ties
+		sort.SliceStable(out, func(i, j int) bool { return out[i].Runs > out[j].Runs })
+		out = out[:maxSessionCommands]
+	}
+	return out
+}
+
+// normalizeCommandText trims and whitespace-collapses a command, dropping
+// commands with no reuse value (navigation, search) and over-long one-offs.
+func normalizeCommandText(text string) string {
+	text = strings.Join(strings.Fields(text), " ")
+	if text == "" {
+		return ""
+	}
+	fields := strings.Fields(text)
+	if commandSkipWords[fields[0]] {
+		return ""
+	}
+	if len([]rune(text)) > 200 {
+		return ""
+	}
+	return text
 }
 
 func sessionTimestamp(events []model.SessionEvent, fallback time.Time) time.Time {
@@ -233,7 +311,13 @@ func searchQuery(ev model.SessionEvent) string {
 			}
 		}
 	}
-	return strings.TrimSpace(ev.CommandText)
+	// No extractable query. Shell pipelines/one-liners are not queries - surfacing
+	// them as "ambiguous searches" pollutes the served search context.
+	cmd := strings.TrimSpace(ev.CommandText)
+	if strings.ContainsAny(cmd, "|&;") || len(cmd) > 80 {
+		return ""
+	}
+	return cmd
 }
 
 func addUsage(dst *model.TokenUsage, src model.TokenUsage) {

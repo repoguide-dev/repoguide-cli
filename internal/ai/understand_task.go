@@ -14,6 +14,7 @@ import (
 const understandTaskModel = "claude-haiku-4-5-20251001"
 
 type TopicSummary = contracts.TopicSummary
+
 type SelectTopicResult = contracts.SelectTopicResult
 
 // SelectTopic calls Claude Haiku to pick the single best topic id for the task,
@@ -68,6 +69,7 @@ func SelectTopic(ctx context.Context, repoContext string, topics []TopicSummary,
 	return SelectTopicResult{TopicID: result.TopicID}, usage, nil
 }
 
+// PriorSession holds a summary of a previous session on this topic.
 type PriorSession = contracts.PriorSession
 
 // WriteOrientationHint calls Claude Haiku to produce a 1-paragraph hint.
@@ -146,9 +148,18 @@ func renderTopicContextBlock(topic model.TopicContext) string {
 	importantFiles = append(importantFiles, imp.EditTargets...)
 	importantFiles = append(importantFiles, imp.ReferenceFiles...)
 	importantFiles = append(importantFiles, imp.CrossCuttingFiles...)
-	if len(importantFiles) > 0 {
+	seen := make(map[string]struct{}, len(importantFiles))
+	deduped := importantFiles[:0]
+	for _, f := range importantFiles {
+		if _, ok := seen[f]; ok {
+			continue
+		}
+		seen[f] = struct{}{}
+		deduped = append(deduped, f)
+	}
+	if len(deduped) > 0 {
 		sb.WriteString("\nImportant files:\n")
-		for _, f := range importantFiles {
+		for _, f := range deduped {
 			fmt.Fprintf(&sb, "- %s\n", f)
 		}
 	}

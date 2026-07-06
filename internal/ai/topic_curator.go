@@ -17,10 +17,35 @@ type TopicCurationSuggestion = contracts.TopicCurationSuggestion
 type TopicCurationSkip = contracts.TopicCurationSkip
 type TopicSuggestionDecision = contracts.TopicSuggestionDecision
 type TopicCuration = contracts.TopicCuration
+type TopicCurationSession = contracts.TopicCurationSession
+
+// BuildTopicCurationSession summarizes one feedback's session events into the
+// evidence passed to the topic curator: user prompts (corrections included),
+// files touched, and commands run/failed.
+func BuildTopicCurationSession(feedbackID, sessionID string, events []model.SessionEvent) TopicCurationSession {
+	summary := buildFeedbackSessionSummary(events, contracts.RepoAnalysisBundle{})
+	prompts := make([]string, 0, len(summary.Prompts))
+	for _, p := range summary.Prompts {
+		if runes := []rune(p); len(runes) > 500 {
+			p = string(runes[:500])
+		}
+		prompts = append(prompts, p)
+	}
+	return TopicCurationSession{
+		FeedbackID:     feedbackID,
+		SessionID:      sessionID,
+		Prompts:        prompts,
+		EditedFiles:    summary.EditedFiles,
+		ReadFiles:      summary.ReadFiles,
+		Commands:       summary.Commands,
+		FailedCommands: summary.FailedCommands,
+	}
+}
 
 // CurateTopicContext calls the model to generate suggestions for topic based on feedbacks.
 // pending contains existing suggestions the model may accept/reject/keep.
-func CurateTopicContext(ctx context.Context, topic *model.TopicContext, feedbacks []*model.MCPFeedback, pending []model.TopicPatchSuggestion) (*TopicCuration, Usage, error) {
+// sessions carries optional per-feedback session evidence (prompts, files, commands).
+func CurateTopicContext(ctx context.Context, topic *model.TopicContext, feedbacks []*model.MCPFeedback, pending []model.TopicPatchSuggestion, sessions []TopicCurationSession) (*TopicCuration, Usage, error) {
 	type feedbackInput struct {
 		FeedbackID          string                        `json:"feedback_id"`
 		Task                string                        `json:"task"`
@@ -50,12 +75,16 @@ func CurateTopicContext(ctx context.Context, topic *model.TopicContext, feedback
 		}
 	}
 
-	userMsg, _ := json.Marshal(map[string]any{
+	payload := map[string]any{
 		"repo_id":             feedbacks[0].RepoID,
 		"topic":               topic,
 		"feedbacks":           fbInputs,
 		"pending_suggestions": pending,
-	})
+	}
+	if len(sessions) > 0 {
+		payload["sessions"] = sessions
+	}
+	userMsg, _ := json.Marshal(payload)
 
 	raw, usage, err := callClaudeWithSystem(ctx, topicCuratorModel, prompts.TopicCuratorSystem, string(userMsg), 4096)
 	if err != nil {

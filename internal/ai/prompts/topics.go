@@ -55,9 +55,9 @@ const SharedFieldRules = `- name: 3-6 words, Title Case, e.g. "MCP context routi
 - important_files.cross_cutting_files: relevant seen_with entries only.
 - tests.signal: use the pre-computed test_touch_signal value unless you have strong evidence to override it.
 - tests.notes: concrete, e.g. "Check response-shape tests before changing JSON fields." Leave empty if nothing specific.
-- tests.commands: always empty array - do not invent commands.
-- known_workflows: 2-5 actionable steps. Derive from read_before_edit_hints, prompt patterns, file co-edit signals. Format: verb phrase.
-- avoid_wasting_time: 1-4 concrete warnings. Derive from context_tax file labels (do not start by reading these), search friction patterns, irrelevant seen_with files. Be specific - name files or file types when possible.
+- tests.commands: only commands copied verbatim from the commands input that run tests or validate changes, at most 3. Empty array if no such command was observed. Never invent commands.
+- known_workflows: 2-5 actionable steps. Derive from read_before_edit_hints, observed commands, prompt patterns (especially follow-up corrections), file co-edit signals. Format: verb phrase.
+- avoid_wasting_time: 1-4 concrete warnings. Derive from commands with failures (name the command and that it failed here), follow-up corrections in prompts, context_tax file labels (do not start by reading these), search friction patterns, irrelevant seen_with files. Be specific - name files, commands, or file types when possible.
 - risk_flags: apply any that fit from this enum:
   schema_sensitive (response/API/type shape often changes)
   low_test_signal (source changes often happen without tests)
@@ -92,7 +92,9 @@ Input fields per group:
 - group_id: stable identifier that you must reference in output
 - directory_hint: primary directory edited in these sessions
 - session_count: how many sessions touched this group
-- prompts: actual user messages - primary signal for naming and known_workflows
+- last_active: date of the most recent session in this group - older groups are more likely to contain stale file paths
+- prompts: actual user messages, most recent sessions first - primary signal for naming and known_workflows. Later prompts within a session are often corrections of what the agent got wrong; treat corrections as strong evidence for known_workflows and avoid_wasting_time.
+- commands: shell commands agents actually ran in these sessions, with run and failure counts. Repeated successful commands are validation-workflow evidence; commands with failures are avoid_wasting_time evidence.
 - top_edited_files: files most frequently written
 - top_read_files: files most frequently read (often reference/schema files)
 - test_files: test files associated with this directory
@@ -111,6 +113,8 @@ Important rules:
 - Every topic object must include group_ids with one or more input group_id values.
 - Keep output order aligned to the first referenced group_id for each topic.
 - Do not invent files not present in the input data.
+- When repository context with a file structure is provided, prefer file paths that appear in it. If a frequently-touched path from session data no longer exists in the file structure (e.g. the repo was reorganized), the sessions are stale: use the current path if the mapping is obvious, otherwise omit the file rather than emitting a dead path.
+- Prefer evidence from recent sessions (see last_active and prompt order) over older sessions when they conflict.
 - Prefer developer intent from prompts over directory names.
 - seen_with entries are candidates for cross_cutting_files: include them if relevant, skip if incidental.
 - If you are unsure, omit the topic instead of inventing a generic one.

@@ -7,7 +7,7 @@ import (
 	"github.com/repoguide/repoguide-core/model"
 )
 
-const bundleVersion = 10
+const bundleVersion = 11
 
 type sessionMetrics struct {
 	UserPromptCount  int
@@ -15,8 +15,16 @@ type sessionMetrics struct {
 	ReadFileCounts   map[string]int
 	EditFileCounts   map[string]int
 	PromptBlocks     []promptBlock
+	Commands         []commandStat
 	TokenUsage       *model.TokenUsage
 	EstimatedCostUSD float64
+}
+
+// commandStat is a deduplicated shell command observed in a session.
+type commandStat struct {
+	Text     string
+	Runs     int
+	Failures int
 }
 
 type promptBlock struct {
@@ -170,6 +178,7 @@ type RepoAnalysisBundle = contracts.RepoAnalysisBundle
 type RepoAnalysisRepo = contracts.RepoAnalysisRepo
 type RepoAnalysisSummary = contracts.RepoAnalysisSummary
 type RepoAnalysisSession = contracts.RepoAnalysisSession
+type RepoAnalysisCommand = contracts.RepoAnalysisCommand
 type SessionInteraction = contracts.SessionInteraction
 type RepoAnalysisFile = contracts.RepoAnalysisFile
 type RepoAnalysisFileLink = contracts.RepoAnalysisFileLink

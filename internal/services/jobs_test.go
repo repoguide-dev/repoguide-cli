@@ -19,7 +19,7 @@ type fakeLLM struct {
 	curateErr    error
 }
 
-func (f *fakeLLM) CurateTopicContext(_ context.Context, _ *model.TopicContext, _ []*model.MCPFeedback, _ []model.TopicPatchSuggestion) (*ai.TopicCuration, ai.Usage, error) {
+func (f *fakeLLM) CurateTopicContext(_ context.Context, _ *model.TopicContext, _ []*model.MCPFeedback, _ []model.TopicPatchSuggestion, _ []ai.TopicCurationSession) (*ai.TopicCuration, ai.Usage, error) {
 	return f.curateResult, ai.Usage{}, f.curateErr
 }
 func (f *fakeLLM) DeriveTopicsAndGenerateContext(_ context.Context, _ contracts.RepoAnalysisBundle) ([]model.TopicContext, ai.Usage, error) {

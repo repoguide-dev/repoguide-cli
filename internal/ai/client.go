@@ -16,7 +16,7 @@ type LLM interface {
 	SelectTopic(ctx context.Context, repoContext string, topics []TopicSummary, task string, prompts []string) (SelectTopicResult, Usage, error)
 	WriteOrientationHint(ctx context.Context, repoContext string, topic model.TopicContext, task string, prompts []string, priorSessions []PriorSession) (string, bool, Usage, error)
 	ClassifyFeedback(ctx context.Context, fb *model.MCPFeedback) (*model.FeedbackClassification, Usage, error)
-	CurateTopicContext(ctx context.Context, topic *model.TopicContext, feedbacks []*model.MCPFeedback, pending []model.TopicPatchSuggestion) (*TopicCuration, Usage, error)
+	CurateTopicContext(ctx context.Context, topic *model.TopicContext, feedbacks []*model.MCPFeedback, pending []model.TopicPatchSuggestion, sessions []TopicCurationSession) (*TopicCuration, Usage, error)
 	PatchRepoContext(ctx context.Context, current string, feedbacks []*model.MCPFeedback, sessions []RepoContextSession) (*RepoContextPatch, Usage, error)
 }
 
@@ -113,11 +113,11 @@ func (c *Client) ClassifyFeedback(ctx context.Context, fb *model.MCPFeedback) (*
 	return clf, usage, err
 }
 
-func (c *Client) CurateTopicContext(ctx context.Context, topic *model.TopicContext, feedbacks []*model.MCPFeedback, pending []model.TopicPatchSuggestion) (*TopicCuration, Usage, error) {
+func (c *Client) CurateTopicContext(ctx context.Context, topic *model.TopicContext, feedbacks []*model.MCPFeedback, pending []model.TopicPatchSuggestion, sessions []TopicCurationSession) (*TopicCuration, Usage, error) {
 	var curation *TopicCuration
 	var usage Usage
 	var err error
-	c.withKey(func() { curation, usage, err = CurateTopicContext(ctx, topic, feedbacks, pending) })
+	c.withKey(func() { curation, usage, err = CurateTopicContext(ctx, topic, feedbacks, pending, sessions) })
 	return curation, usage, err
 }
 

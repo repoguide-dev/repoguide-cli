@@ -1071,6 +1071,9 @@ func finalizeDiscoverability(fileStats map[string]*fileAccum, searchStats map[st
 		out.SearchHeavyTargets = out.SearchHeavyTargets[:20]
 	}
 	for _, stat := range searchStats {
+		if stat.query == "(unknown)" {
+			continue
+		}
 		if len(stat.editTargets) < 2 && len(stat.readTargets) < 5 {
 			continue
 		}
@@ -1259,7 +1262,9 @@ func buildSessionSummaries(sessions []backendSession) []RepoAnalysisSession {
 				if shouldIgnoreSessionPrompt(event.Text) {
 					continue
 				}
-				if text := truncatePromptPreview(event.Text, 100); text != "" {
+				// 300 chars keeps follow-up corrections intelligible for topic
+				// generation; 100 cut most prompts mid-sentence.
+				if text := truncatePromptPreview(event.Text, 300); text != "" {
 					prompts = append(prompts, text)
 				}
 				if text := sanitizeInteractionText(event.Text); text != "" {
@@ -1273,8 +1278,9 @@ func buildSessionSummaries(sessions []backendSession) []RepoAnalysisSession {
 		}
 		row := sessionSummaryRow{
 			session: RepoAnalysisSession{
-				ID:    session.id,
-				Title: sessionDisplayName(session.name),
+				ID:        session.id,
+				Title:     sessionDisplayName(session.name),
+				Timestamp: session.timestamp.UTC().Format(time.RFC3339),
 			},
 			timestamp: session.timestamp,
 		}
@@ -1283,6 +1289,13 @@ func buildSessionSummaries(sessions []backendSession) []RepoAnalysisSession {
 		}
 		if len(interactions) > 0 {
 			row.session.Interactions = interactions
+		}
+		for _, cmd := range session.metrics.Commands {
+			row.session.Commands = append(row.session.Commands, RepoAnalysisCommand{
+				Text:     cmd.Text,
+				Runs:     cmd.Runs,
+				Failures: cmd.Failures,
+			})
 		}
 		rows = append(rows, row)
 	}

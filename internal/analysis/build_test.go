@@ -93,7 +93,7 @@ func TestBuildRepoAnalysisIncludesRelatedSessionNames(t *testing.T) {
 
 func TestBuildRepoAnalysisIncludesSessionPromptSummaries(t *testing.T) {
 	repoRoot := filepath.Clean("/repo")
-	longPrompt := strings.Repeat("a", 110)
+	longPrompt := strings.Repeat("a", 310)
 
 	stored := []model.RepoSessionEvents{
 		{
@@ -137,8 +137,8 @@ func TestBuildRepoAnalysisIncludesSessionPromptSummaries(t *testing.T) {
 	if len(bundle.Sessions[0].Prompts) != 2 {
 		t.Fatalf("expected 2 prompt previews, got %#v", bundle.Sessions[0])
 	}
-	if got := bundle.Sessions[0].Prompts[0]; got != strings.Repeat("a", 100) {
-		t.Fatalf("expected first prompt preview to be truncated to 100 chars, got %q (%d chars)", got, len([]rune(got)))
+	if got := bundle.Sessions[0].Prompts[0]; got != strings.Repeat("a", 300) {
+		t.Fatalf("expected first prompt preview to be truncated to 300 chars, got %q (%d chars)", got, len([]rune(got)))
 	}
 	if got := bundle.Sessions[0].Prompts[1]; got != "second prompt" {
 		t.Fatalf("expected second prompt preview to be preserved, got %q", got)

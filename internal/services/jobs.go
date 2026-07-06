@@ -369,7 +369,21 @@ func (s *JobService) patchTopic(ctx context.Context, j *model.ContextPatchJob) e
 		slog.Warn("patchTopic: list pending suggestions failed (continuing)", "err", err)
 	}
 
-	curation, _, err := s.ai.CurateTopicContext(ctx, topic, fbPtrs, pending)
+	// Per-feedback session evidence: what the user asked, what was touched,
+	// which commands ran or failed.
+	var sessions []ai.TopicCurationSession
+	for _, fb := range fbPtrs {
+		if fb.SessionID == "" {
+			continue
+		}
+		events, evErr := s.store.Events().GetSession(ctx, j.RepoID, fb.SessionID)
+		if evErr != nil || len(events) == 0 {
+			continue
+		}
+		sessions = append(sessions, ai.BuildTopicCurationSession(fb.FeedbackID, fb.SessionID, events))
+	}
+
+	curation, _, err := s.ai.CurateTopicContext(ctx, topic, fbPtrs, pending, sessions)
 	if err != nil {
 		return err
 	}
@@ -470,7 +484,19 @@ func (s *JobService) patchRepo(ctx context.Context, j *model.ContextPatchJob) er
 	for i := range feedbacks {
 		fbPtrs[i] = &feedbacks[i]
 	}
-	patch, _, err := s.ai.PatchRepoContext(ctx, entry.Content, fbPtrs, nil)
+	// Session signals per feedback: user prompts, edited files, and patch diffs.
+	var sessions []ai.RepoContextSession
+	for _, fb := range fbPtrs {
+		if fb.SessionID == "" {
+			continue
+		}
+		events, evErr := s.store.Events().GetSession(ctx, j.RepoID, fb.SessionID)
+		if evErr != nil || len(events) == 0 {
+			continue
+		}
+		sessions = append(sessions, ai.BuildRepoContextSession(fb.FeedbackID, fb.SessionID, events))
+	}
+	patch, _, err := s.ai.PatchRepoContext(ctx, entry.Content, fbPtrs, sessions)
 	if err != nil {
 		return err
 	}

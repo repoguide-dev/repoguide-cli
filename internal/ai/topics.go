@@ -29,9 +29,17 @@ type seenWithEntry struct {
 	Sessions int    `json:"sessions"`
 }
 
+type commandEntry struct {
+	Text     string `json:"text"`
+	Runs     int    `json:"runs"`
+	Failures int    `json:"failures,omitempty"`
+}
+
 type topicCandidate struct {
 	subsystem           contracts.RepoAnalysisSubsystem
 	prompts             []string
+	commands            []commandEntry
+	lastActive          string
 	tests               []string
 	topReadFiles        []string
 	seenWith            []seenWithEntry
@@ -124,6 +132,7 @@ func GenerateTopicContextFromFeedback(
 			Sessions:    1,
 			EditedFiles: len(summary.EditedFiles),
 			ReadFiles:   len(summary.ReadFiles),
+			LastActive:  lastEventDate(events),
 		},
 	}
 	return &topic, "", usage, nil
@@ -144,6 +153,11 @@ func buildFeedbackSessionSummary(events []model.SessionEvent, bundle contracts.R
 	var readFiles []string
 	editSet := map[string]struct{}{}
 	var editedFiles []string
+	commandSet := map[string]struct{}{}
+	var commands []string
+	pendingCommands := map[string]string{}
+	failedSet := map[string]struct{}{}
+	var failedCommands []string
 
 	for _, ev := range events {
 		if ev.Kind == "prompt" {
@@ -155,6 +169,25 @@ func buildFeedbackSessionSummary(events []model.SessionEvent, bundle contracts.R
 			if _, ok := toolSet[ev.ToolName]; !ok {
 				toolSet[ev.ToolName] = struct{}{}
 				toolCalls = append(toolCalls, ev.ToolName)
+			}
+		}
+		if ev.Kind == "tool_call" && ev.CommandText != "" {
+			if text := strings.Join(strings.Fields(ev.CommandText), " "); text != "" && len([]rune(text)) <= 200 {
+				if _, ok := commandSet[text]; !ok && len(commands) < 15 {
+					commandSet[text] = struct{}{}
+					commands = append(commands, text)
+				}
+				if ev.ToolCallID != "" {
+					pendingCommands[ev.ToolCallID] = text
+				}
+			}
+		}
+		if ev.Kind == "tool_result" && ev.IsError && ev.ToolCallID != "" {
+			if text, ok := pendingCommands[ev.ToolCallID]; ok {
+				if _, seen := failedSet[text]; !seen {
+					failedSet[text] = struct{}{}
+					failedCommands = append(failedCommands, text)
+				}
 			}
 		}
 		for _, p := range ev.ReadPaths {
@@ -190,11 +223,13 @@ func buildFeedbackSessionSummary(events []model.SessionEvent, bundle contracts.R
 	}
 
 	return prompts.FeedbackTopicSessionData{
-		Prompts:     userPrompts,
-		ToolCalls:   toolCalls,
-		EditedFiles: editedFiles,
-		ReadFiles:   readFiles,
-		FileLabels:  fileLabels,
+		Prompts:        userPrompts,
+		ToolCalls:      toolCalls,
+		Commands:       commands,
+		FailedCommands: failedCommands,
+		EditedFiles:    editedFiles,
+		ReadFiles:      readFiles,
+		FileLabels:     fileLabels,
 	}
 }
 
@@ -223,8 +258,10 @@ type bundleFileInfo struct {
 
 func buildCandidates(bundle contracts.RepoAnalysisBundle) []topicCandidate {
 	sessionPrompts := make(map[string][]string, len(bundle.Sessions))
+	sessionCommands := make(map[string][]contracts.RepoAnalysisCommand, len(bundle.Sessions))
 	for _, s := range bundle.Sessions {
 		sessionPrompts[s.ID] = s.Prompts
+		sessionCommands[s.ID] = s.Commands
 	}
 
 	fileIndex := make(map[string]bundleFileInfo, len(bundle.Files))
@@ -273,7 +310,7 @@ func buildCandidates(bundle contracts.RepoAnalysisBundle) []topicCandidate {
 		dir := filepath.ToSlash(sub.Name)
 		dirPrefix := dir + "/"
 
-		// prompts from related sessions, capped at 12
+		// prompts from related sessions (newest first), capped at 12
 		seenP := map[string]struct{}{}
 		var prompts []string
 		for _, ref := range sub.RelatedSessions {
@@ -283,6 +320,15 @@ func buildCandidates(bundle contracts.RepoAnalysisBundle) []topicCandidate {
 					prompts = append(prompts, p)
 				}
 			}
+		}
+
+		// commands actually run in related sessions, aggregated across sessions
+		commands := aggregateCommands(sub.RelatedSessions, sessionCommands)
+
+		// RelatedSessions are sorted newest first
+		lastActive := ""
+		if len(sub.RelatedSessions) > 0 && len(sub.RelatedSessions[0].Timestamp) >= 10 {
+			lastActive = sub.RelatedSessions[0].Timestamp[:10]
 		}
 
 		// test files, top read files, and file classifications in one pass
@@ -362,6 +408,8 @@ func buildCandidates(bundle contracts.RepoAnalysisBundle) []topicCandidate {
 		candidates = append(candidates, topicCandidate{
 			subsystem:           sub,
 			prompts:             prompts,
+			commands:            commands,
+			lastActive:          lastActive,
 			tests:               dedupeStrings(tests),
 			topReadFiles:        topReadFiles,
 			seenWith:            seenWith,
@@ -372,6 +420,34 @@ func buildCandidates(bundle contracts.RepoAnalysisBundle) []topicCandidate {
 		})
 	}
 	return candidates
+}
+
+// aggregateCommands merges observed commands across a subsystem's related
+// sessions, summing run/failure counts, ordered by runs, capped at 8.
+func aggregateCommands(refs []contracts.RepoAnalysisSessionRef, sessionCommands map[string][]contracts.RepoAnalysisCommand) []commandEntry {
+	stats := map[string]*commandEntry{}
+	var order []string
+	for _, ref := range refs {
+		for _, cmd := range sessionCommands[ref.ID] {
+			entry := stats[cmd.Text]
+			if entry == nil {
+				entry = &commandEntry{Text: cmd.Text}
+				stats[cmd.Text] = entry
+				order = append(order, cmd.Text)
+			}
+			entry.Runs += cmd.Runs
+			entry.Failures += cmd.Failures
+		}
+	}
+	out := make([]commandEntry, 0, len(order))
+	for _, text := range order {
+		out = append(out, *stats[text])
+	}
+	sort.SliceStable(out, func(i, j int) bool { return out[i].Runs > out[j].Runs })
+	if len(out) > 8 {
+		out = out[:8]
+	}
+	return out
 }
 
 func deriveTestSignal(sub contracts.RepoAnalysisSubsystem) string {
@@ -407,7 +483,9 @@ type llmTopicGroup struct {
 	GroupID             string              `json:"group_id"`
 	DirectoryHint       string              `json:"directory_hint"`
 	SessionCount        int                 `json:"session_count"`
+	LastActive          string              `json:"last_active,omitempty"`
 	Prompts             []string            `json:"prompts"`
+	Commands            []commandEntry      `json:"commands,omitempty"`
 	TopEditedFiles      []string            `json:"top_edited_files"`
 	TopReadFiles        []string            `json:"top_read_files,omitempty"`
 	TestFiles           []string            `json:"test_files,omitempty"`
@@ -473,7 +551,9 @@ func nameTopics(ctx context.Context, candidates []topicCandidate, repoCtx string
 			GroupID:             groupID,
 			DirectoryHint:       c.subsystem.Name,
 			SessionCount:        c.subsystem.Sessions,
+			LastActive:          c.lastActive,
 			Prompts:             c.prompts,
+			Commands:            c.commands,
 			TopEditedFiles:      c.subsystem.TopFiles,
 			TopReadFiles:        c.topReadFiles,
 			TestFiles:           c.tests,
@@ -510,6 +590,7 @@ type aggregatedTopicEvidence struct {
 	sessions    int
 	editedFiles int
 	readFiles   int
+	lastActive  string
 }
 
 func materializeTopicContexts(results []llmTopicResult, groupByID map[string]topicCandidate, groupOrder []string) []model.TopicContext {
@@ -552,6 +633,7 @@ func materializeTopicContexts(results []llmTopicResult, groupByID map[string]top
 				Sessions:    evidence.sessions,
 				EditedFiles: evidence.editedFiles,
 				ReadFiles:   evidence.readFiles,
+				LastActive:  evidence.lastActive,
 			},
 		})
 	}
@@ -591,6 +673,9 @@ func aggregateTopicEvidence(groupIDs []string, groupByID map[string]topicCandida
 		out.sessions += candidate.subsystem.Sessions
 		out.editedFiles += candidate.subsystem.SourceEdits + candidate.subsystem.TestEdits
 		out.readFiles += candidate.readFiles
+		if candidate.lastActive > out.lastActive {
+			out.lastActive = candidate.lastActive
+		}
 	}
 	return out
 }
@@ -626,10 +711,21 @@ func fallbackTopicContexts(candidates []topicCandidate) []model.TopicContext {
 				Sessions:    candidate.subsystem.Sessions,
 				EditedFiles: candidate.subsystem.SourceEdits + candidate.subsystem.TestEdits,
 				ReadFiles:   candidate.readFiles,
+				LastActive:  candidate.lastActive,
 			},
 		})
 	}
 	return topics
+}
+
+// lastEventDate returns the date (YYYY-MM-DD) of the last timestamped event.
+func lastEventDate(events []model.SessionEvent) string {
+	for i := len(events) - 1; i >= 0; i-- {
+		if len(events[i].Timestamp) >= 10 {
+			return events[i].Timestamp[:10]
+		}
+	}
+	return ""
 }
 
 // toRepoRel converts an absolute path to repo-relative form. Returns "" for paths outside the repo.
@@ -796,12 +892,24 @@ func fallbackTopicResult(c topicCandidate) llmTopicResult {
 			StartWith: append([]string(nil), c.tests...),
 			Signal:    c.testTouchSignal,
 			Notes:     notes,
-			Commands:  []string{},
+			Commands:  observedTestCommands(c.commands),
 		},
 		KnownWorkflows:   workflows,
 		AvoidWastingTime: avoid,
 		RiskFlags:        fallbackRiskFlags(c),
 	}
+}
+
+// observedTestCommands returns test-like commands actually run in sessions -
+// the only allowed source for tests.commands.
+func observedTestCommands(commands []commandEntry) []string {
+	out := []string{}
+	for _, cmd := range commands {
+		if strings.Contains(cmd.Text, "test") && len(out) < 3 {
+			out = append(out, cmd.Text)
+		}
+	}
+	return out
 }
 
 func fallbackTopicName(c topicCandidate) string {
