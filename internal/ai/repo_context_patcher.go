@@ -38,14 +38,27 @@ func BuildRepoContextSession(feedbackID, sessionID string, events []model.Sessio
 				sess.EditedFiles = append(sess.EditedFiles, p)
 			}
 		}
-		if len(sess.DiffSnippets) >= maxRepoContextDiffs {
-			continue
-		}
-		if snippet := repoContextDiffSnippet(ev.CommandText); snippet != "" {
-			sess.DiffSnippets = append(sess.DiffSnippets, snippet)
-		}
+		sess.DiffSnippets = appendRepoContextDiffSnippet(sess.DiffSnippets, ev.CommandText)
 	}
 	return sess
+}
+
+func repoContextDiffSnippets(events []model.SessionEvent) []string {
+	var snippets []string
+	for _, ev := range events {
+		snippets = appendRepoContextDiffSnippet(snippets, ev.CommandText)
+	}
+	return snippets
+}
+
+func appendRepoContextDiffSnippet(snippets []string, commandText string) []string {
+	if len(snippets) >= maxRepoContextDiffs {
+		return snippets
+	}
+	if snippet := repoContextDiffSnippet(commandText); snippet != "" {
+		return append(snippets, snippet)
+	}
+	return snippets
 }
 
 func repoContextDiffSnippet(commandText string) string {

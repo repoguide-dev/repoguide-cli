@@ -126,7 +126,7 @@ func TestBuildTopicCurationSessionSummarizesEvidence(t *testing.T) {
 		{Kind: "tool_call", ToolName: "Bash", ToolCallID: "t1", CommandText: "go test ./backend/server/..."},
 		{Kind: "tool_result", ToolCallID: "t1", IsError: true},
 		{Kind: "prompt", Text: "no - use the existing retry helper in backend/util"},
-		{Kind: "tool_call", ToolName: "Edit", WritePaths: []string{"backend/server/webhooks.go"}},
+		{Kind: "tool_call", ToolName: "Edit", CommandText: "git diff -- backend/server/webhooks.go\ndiff --git a/backend/server/webhooks.go b/backend/server/webhooks.go\n@@\n-old\n+new", WritePaths: []string{"backend/server/webhooks.go"}},
 	}
 	sess := BuildTopicCurationSession("fb1", "s1", events)
 
@@ -142,6 +142,9 @@ func TestBuildTopicCurationSessionSummarizesEvidence(t *testing.T) {
 	if len(sess.FailedCommands) != 1 || sess.FailedCommands[0] != "go test ./backend/server/..." {
 		t.Fatalf("failed commands: %#v", sess.FailedCommands)
 	}
+	if len(sess.DiffSnippets) != 1 || !strings.Contains(sess.DiffSnippets[0], "diff --git a/backend/server/webhooks.go") {
+		t.Fatalf("diff snippets: %#v", sess.DiffSnippets)
+	}
 }
 
 // TestTopicCuratorPromptDemandsSessionEvidence pins the curator rules that keep
@@ -152,6 +155,7 @@ func TestTopicCuratorPromptDemandsSessionEvidence(t *testing.T) {
 		"never invent paths",
 		"corrects the agent",
 		"Commands come only from session data",
+		"Use diff snippets as supporting evidence",
 	}
 	for _, want := range wants {
 		if !strings.Contains(prompts.TopicCuratorSystem, want) {

@@ -7,7 +7,7 @@ Given:
 - one existing topic object
 - new classified feedback for this topic
 - pending or legacy suggestions for this topic
-- optional sessions: per-feedback session evidence with the user prompts (in order - later prompts often correct earlier ones), edited/read files, commands the agent ran, and failed_commands that errored
+- optional sessions: per-feedback session evidence with the user prompts (in order - later prompts often correct earlier ones), edited/read files, commands the agent ran, failed_commands that errored, and git/apply_patch diff snippets
 
 Your job is to:
 1. extract small, evidence-backed topic-context suggestions from new feedback/session data
@@ -17,6 +17,7 @@ Session-evidence rules:
 - Any file you suggest must appear in the session data, the feedback text, or the existing topic - never invent paths.
 - A follow-up prompt that corrects the agent ("no - do X instead") is strong evidence for a known_workflow or avoid_wasting_time entry.
 - Commands come only from session data. A command that failed in the session is avoid_wasting_time evidence when the failure looks repeatable rather than task-specific.
+- Use diff snippets as supporting evidence in addition to feedback recommendations; prefer observed code changes over speculation when they clarify what was actually fixed.
 - Prefer suggestions supported by both the feedback text and the session data over ones supported by only one.
 
 Topic context is durable, task-routing and navigation guidance shared with future agents. Protect it from uncontrolled growth.

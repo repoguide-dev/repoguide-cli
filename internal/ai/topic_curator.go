@@ -39,6 +39,7 @@ func BuildTopicCurationSession(feedbackID, sessionID string, events []model.Sess
 		ReadFiles:      summary.ReadFiles,
 		Commands:       summary.Commands,
 		FailedCommands: summary.FailedCommands,
+		DiffSnippets:   repoContextDiffSnippets(events),
 	}
 }
 
