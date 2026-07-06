@@ -5,7 +5,12 @@ on:
     branches: [main]
     paths:
       - brew/VERSION
-  workflow_dispatch: {}
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "Release version to tag, without or with v prefix. Defaults to brew/VERSION."
+        required: false
+        type: string
 
 permissions:
   contents: read
@@ -24,14 +29,19 @@ jobs:
           fetch-depth: 0
 
       - id: compute
+        env:
+          INPUT_VERSION: ${{ github.event.inputs.version }}
         run: |
           set -euo pipefail
-          VERSION="$(cat brew/VERSION)"
+          VERSION="${INPUT_VERSION:-}"
+          if [[ -z "$VERSION" ]]; then
+            VERSION="$(cat brew/VERSION)"
+          fi
           VERSION="${VERSION#v}"
           TAG="v$VERSION"
 
           if [[ ! "$VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+(-[A-Za-z0-9.-]+)?$ ]]; then
-            echo "ERROR: brew/VERSION must look like 0.1.0 or 0.1.0-beta.1, got: $VERSION"
+            echo "ERROR: release version must look like 0.1.0 or 0.1.0-beta.1, got: $VERSION"
             exit 1
           fi
 
