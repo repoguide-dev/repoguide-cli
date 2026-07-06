@@ -130,7 +130,7 @@ type sessionSource struct {
 const sessionIndexVersion = 3
 
 func SupportedSessionAgents() []string {
-	return []string{"codex", "claude", "cursor", "opencode", "copilot", "gemini"}
+	return []string{"codex", "claude", "cursor", "opencode", "copilot", "vscode-copilot", "gemini"}
 }
 
 func CountSessions(agent string) (int, error) {
@@ -151,6 +151,8 @@ func QuickCountSessions(agent string) int {
 			len(glob(filepath.Join(opencodeDBCacheRoot(), "session", "*", "*.json")))
 	case "copilot":
 		return len(glob(home(".copilot", "session-state", "*", "events.jsonl")))
+	case "vscode-copilot":
+		return len(vscodeCopilotSessionPaths())
 	case "gemini":
 		return len(glob(home(".gemini", "tmp", "*", "chats", "session-*.jsonl")))
 	default:
@@ -444,6 +446,12 @@ func sessionSourceForAgent(agent string) (sessionSource, error) {
 			location: home(".copilot", "session-state"),
 			paths:    glob(home(".copilot", "session-state", "*", "events.jsonl")),
 		}, nil
+	case "vscode-copilot":
+		return sessionSource{
+			agent:    "vscode-copilot",
+			location: "VS Code workspaceStorage",
+			paths:    vscodeCopilotSessionPaths(),
+		}, nil
 	case "gemini":
 		return sessionSource{
 			agent:    "gemini",
@@ -506,6 +514,8 @@ func noSessionsError(agent string) error {
 		return errors.New("no OpenCode sessions found")
 	case "copilot":
 		return errors.New("no GitHub Copilot sessions found")
+	case "vscode-copilot":
+		return errors.New("no VS Code Copilot Chat sessions found")
 	case "gemini":
 		return errors.New("no Gemini CLI sessions found")
 	default:
@@ -694,6 +704,8 @@ func readSession(agent, path string, indexByID map[string]codexIndexEntry) (Sess
 		return readOpencodeSession(path)
 	case "copilot":
 		return readCopilotSession(path)
+	case "vscode-copilot":
+		return readVSCodeCopilotSession(path)
 	case "gemini":
 		return readGeminiSession(path)
 	default:
@@ -1211,6 +1223,8 @@ func displayAgentName(agent string) string {
 		return "OpenCode"
 	case "copilot":
 		return "GitHub Copilot"
+	case "vscode-copilot":
+		return "VS Code Copilot Chat"
 	case "gemini":
 		return "Gemini CLI"
 	default:

@@ -223,6 +223,8 @@ func buildSessionEvents(session SessionSummary) ([]SessionEvent, error) {
 		return buildOpencodeSessionEvents(session.Path)
 	case "copilot":
 		return buildCopilotSessionEvents(session.Path)
+	case "vscode-copilot":
+		return buildVSCodeCopilotSessionEvents(session.Path)
 	case "gemini":
 		return buildGeminiSessionEvents(session.Path)
 	default:
