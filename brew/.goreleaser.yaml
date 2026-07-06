@@ -24,6 +24,12 @@ builds:
     ignore:
       - goos: windows
         goarch: arm64
+    hooks:
+      post:
+        # ponytail: ad-hoc sign (no Developer ID) so Apple Silicon doesn't SIGKILL
+        # the unsigned binary on launch. Upgrade to a real Developer ID + notarization
+        # if Gatekeeper's "unidentified developer" prompt becomes a problem.
+        - cmd: sh -c 'case "{{ .Target }}" in darwin_*) codesign --force --sign - "{{ .Path }}";; esac'
 
 archives:
   - id: repoguide

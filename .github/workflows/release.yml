@@ -64,7 +64,9 @@ jobs:
   release:
     needs: tag
     if: needs.tag.outputs.created == 'true'
-    runs-on: ubuntu-latest
+    # macos-latest so `codesign` (used by the goreleaser post-build hook to
+    # ad-hoc sign darwin binaries) is actually available on the runner.
+    runs-on: macos-latest
     permissions:
       contents: write
     steps:
