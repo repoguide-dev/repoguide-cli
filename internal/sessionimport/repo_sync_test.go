@@ -19,6 +19,7 @@ func TestCloudClientRegisterRepo(t *testing.T) {
 		RepoID   string `json:"repo_id"`
 		RepoRoot string `json:"repo_root"`
 		RepoName string `json:"repo_name"`
+		RepoURL  string `json:"repo_url"`
 	}
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodPost {
@@ -43,6 +44,43 @@ func TestCloudClientRegisterRepo(t *testing.T) {
 	}
 	if got.RepoID != "repo_123" || got.RepoRoot != "/tmp/project" || got.RepoName != "project" {
 		t.Fatalf("unexpected payload: %#v", got)
+	}
+	if got.RepoURL != "" {
+		t.Fatalf("RepoURL = %q, want empty for non-git repo", got.RepoURL)
+	}
+}
+
+func TestCloudClientRegisterRepoIncludesGitHubOrigin(t *testing.T) {
+	repoRoot := t.TempDir()
+	runGit(t, repoRoot, "init")
+	runGit(t, repoRoot, "remote", "add", "origin", "git@github.com:acme/widgets.git")
+
+	var got struct {
+		RepoURL string `json:"repo_url"`
+	}
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if err := json.NewDecoder(r.Body).Decode(&got); err != nil {
+			t.Fatalf("Decode body: %v", err)
+		}
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer server.Close()
+
+	client := CloudClient{BaseURL: server.URL, Token: "test-token"}
+	if err := client.RegisterRepo("repo_123", repoRoot); err != nil {
+		t.Fatalf("RegisterRepo returned error: %v", err)
+	}
+	if got.RepoURL != "https://github.com/acme/widgets" {
+		t.Fatalf("RepoURL = %q, want https://github.com/acme/widgets", got.RepoURL)
+	}
+}
+
+func TestGithubRepoURL(t *testing.T) {
+	repoRoot := t.TempDir()
+	runGit(t, repoRoot, "init")
+	runGit(t, repoRoot, "remote", "add", "origin", "https://github.com/acme/widgets.git")
+	if got := githubRepoURL(repoRoot); got != "https://github.com/acme/widgets" {
+		t.Fatalf("githubRepoURL() = %q, want https://github.com/acme/widgets", got)
 	}
 }
 
@@ -232,6 +270,48 @@ func TestCloudClientUploadRepoEvents(t *testing.T) {
 	}
 	if len(gotEvents) != 3 || gotEvents[2]["text"] != "inspect repo" {
 		t.Fatalf("unexpected uploaded events: %#v", gotEvents)
+	}
+}
+
+func TestBuildRepoPathAliases(t *testing.T) {
+	repoRoot := t.TempDir()
+	runGit(t, repoRoot, "init")
+	runGit(t, repoRoot, "config", "user.email", "dev@example.com")
+	runGit(t, repoRoot, "config", "user.name", "Dev")
+
+	oldPath := filepath.Join(repoRoot, "pkg", "old_name.go")
+	if err := os.MkdirAll(filepath.Dir(oldPath), 0o755); err != nil {
+		t.Fatalf("MkdirAll: %v", err)
+	}
+	if err := os.WriteFile(oldPath, []byte("package pkg\n"), 0o644); err != nil {
+		t.Fatalf("WriteFile(old): %v", err)
+	}
+	runGit(t, repoRoot, "add", ".")
+	runGit(t, repoRoot, "commit", "-m", "add old name")
+
+	midPath := filepath.Join(repoRoot, "pkg", "mid_name.go")
+	if err := os.Rename(oldPath, midPath); err != nil {
+		t.Fatalf("Rename old->mid: %v", err)
+	}
+	runGit(t, repoRoot, "add", "-A")
+	runGit(t, repoRoot, "commit", "-m", "rename to mid")
+
+	finalPath := filepath.Join(repoRoot, "pkg", "final_name.go")
+	if err := os.Rename(midPath, finalPath); err != nil {
+		t.Fatalf("Rename mid->final: %v", err)
+	}
+	runGit(t, repoRoot, "add", "-A")
+	runGit(t, repoRoot, "commit", "-m", "rename to final")
+
+	aliases := buildRepoPathAliases(repoRoot)
+	if got := aliases["pkg/old_name.go"]; got != "pkg/final_name.go" {
+		t.Fatalf("old alias = %q, want final", got)
+	}
+	if got := aliases["pkg/mid_name.go"]; got != "pkg/final_name.go" {
+		t.Fatalf("mid alias = %q, want final", got)
+	}
+	if _, ok := aliases["pkg/final_name.go"]; ok {
+		t.Fatalf("final path should not be emitted as alias: %#v", aliases)
 	}
 }
 

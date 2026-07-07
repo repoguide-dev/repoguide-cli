@@ -12,6 +12,7 @@ import (
 	"net/http"
 	"net/url"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"sync"
@@ -215,10 +216,12 @@ func (c CloudClient) RegisterRepo(repoID, repoRoot string) error {
 	if strings.TrimSpace(c.Token) == "" || strings.TrimSpace(c.BaseURL) == "" {
 		return nil
 	}
+	repoURL := githubRepoURL(repoRoot)
 	body, err := json.Marshal(map[string]any{
 		"repo_id":   repoID,
 		"repo_root": repoRoot,
 		"repo_name": filepath.Base(repoRoot),
+		"repo_url":  repoURL,
 	})
 	if err != nil {
 		return err
@@ -241,6 +244,40 @@ func (c CloudClient) RegisterRepo(repoID, repoRoot string) error {
 		return backendRequestError("backend repo registration failed", resp)
 	}
 	return nil
+}
+
+func githubRepoURL(repoRoot string) string {
+	out, err := exec.Command("git", "-C", repoRoot, "remote", "get-url", "origin").Output()
+	if err != nil {
+		return ""
+	}
+	raw := strings.TrimSpace(string(out))
+	if raw == "" {
+		return ""
+	}
+	switch {
+	case strings.HasPrefix(raw, "git@github.com:"):
+		path := strings.TrimPrefix(raw, "git@github.com:")
+		path = strings.TrimSuffix(path, ".git")
+		path = strings.Trim(path, "/")
+		if path == "" {
+			return ""
+		}
+		return "https://github.com/" + path
+	case strings.HasPrefix(raw, "https://github.com/"), strings.HasPrefix(raw, "http://github.com/"):
+		u, err := url.Parse(raw)
+		if err != nil {
+			return ""
+		}
+		path := strings.TrimSuffix(u.Path, ".git")
+		path = strings.Trim(path, "/")
+		if path == "" {
+			return ""
+		}
+		return "https://github.com/" + path
+	default:
+		return ""
+	}
 }
 
 func (c CloudClient) DeleteRepo(repoID string) error {
@@ -428,10 +465,67 @@ func buildRepoEventsZip(repoID, repoRoot string, since time.Time) ([]byte, int, 
 		n++
 	}
 
+	if aliases := buildRepoPathAliases(repoRoot); len(aliases) > 0 {
+		data, err := json.Marshal(map[string]any{"path_aliases": aliases})
+		if err != nil {
+			return nil, 0, err
+		}
+		entry, err := zw.Create("git_history.json")
+		if err != nil {
+			return nil, 0, err
+		}
+		if _, err := entry.Write(data); err != nil {
+			return nil, 0, err
+		}
+		n++
+	}
+
 	if err := zw.Close(); err != nil {
 		return nil, 0, err
 	}
 	return buf.Bytes(), n, nil
+}
+
+func buildRepoPathAliases(repoRoot string) map[string]string {
+	cmd := exec.Command("git", "-C", repoRoot, "log", "--all", "--format=", "--name-status", "--find-renames=90%", "--diff-filter=R")
+	out, err := cmd.Output()
+	if err != nil || len(bytes.TrimSpace(out)) == 0 {
+		return nil
+	}
+
+	aliases := map[string]string{}
+	for _, raw := range strings.Split(string(out), "\n") {
+		line := strings.TrimSpace(raw)
+		if line == "" || line[0] != 'R' {
+			continue
+		}
+		parts := strings.Split(raw, "\t")
+		if len(parts) < 3 {
+			continue
+		}
+		from := filepath.ToSlash(strings.TrimSpace(parts[1]))
+		to := filepath.ToSlash(strings.TrimSpace(parts[2]))
+		if from == "" || to == "" || from == to {
+			continue
+		}
+		target := aliases[to]
+		if target == "" {
+			target = to
+		}
+		aliases[from] = target
+		aliases[to] = target
+	}
+
+	outAliases := make(map[string]string, len(aliases))
+	for from, to := range aliases {
+		if from != to {
+			outAliases[from] = to
+		}
+	}
+	if len(outAliases) == 0 {
+		return nil
+	}
+	return outAliases
 }
 
 // ParseRepoEventsForLocal parses local session artifacts for repoID and returns

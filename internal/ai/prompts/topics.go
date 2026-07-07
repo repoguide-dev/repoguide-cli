@@ -56,8 +56,8 @@ const SharedFieldRules = `- name: 3-6 words, Title Case, e.g. "MCP context routi
 - tests.signal: use the pre-computed test_touch_signal value unless you have strong evidence to override it.
 - tests.notes: concrete, e.g. "Check response-shape tests before changing JSON fields." Leave empty if nothing specific.
 - tests.commands: only commands copied verbatim from the commands input that run tests or validate changes, at most 3. Empty array if no such command was observed. Never invent commands.
-- known_workflows: 2-5 actionable steps. Derive from read_before_edit_hints, observed commands, prompt patterns (especially follow-up corrections), file co-edit signals. Format: verb phrase.
-- avoid_wasting_time: 1-4 concrete warnings. Derive from commands with failures (name the command and that it failed here), follow-up corrections in prompts, context_tax file labels (do not start by reading these), search friction patterns, irrelevant seen_with files. Be specific - name files, commands, or file types when possible.
+- known_workflows: actionable steps, one per distinct recurring pattern - do not restate the same workflow twice. Derive from read_before_edit_hints, observed commands, prompt patterns (especially follow-up corrections), file co-edit signals. Format: verb phrase.
+- avoid_wasting_time: concrete warnings, one per distinct pitfall - do not restate the same warning twice. Derive from commands with failures (name the command and that it failed here), follow-up corrections in prompts, context_tax file labels (do not start by reading these), search friction patterns, irrelevant seen_with files. Be specific - name files, commands, or file types when possible.
 - risk_flags: apply any that fit from this enum:
   schema_sensitive (response/API/type shape often changes)
   low_test_signal (source changes often happen without tests)
@@ -121,6 +121,8 @@ Important rules:
 - Ignore repeated command-like strings, corrupted prompt fragments, obvious tool noise, and low-signal identifiers unless reinforced by file evidence.
 - Topic names must describe a recurring kind of work, not a folder name.
 - Avoid vague names like "Backend updates", "CLI changes", "Code improvements".
+- A topic is a domain area agents return to repeatedly, not a single task. If a group's prompts describe one specific fix, feature, or one-off request with no sign of repeat activity elsewhere in the input, do not mint a topic from it alone - fold it into a broader domain topic if one fits, otherwise omit it.
+- Name and summary the topic by the domain it covers (e.g. "Session telemetry parsing"), not by the task that happened to generate the evidence (e.g. "Fix telemetry timestamp bug").
 - Keep output compact - it will be injected directly into an agent's context window.
 
 Return only valid JSON. No markdown, no comments.
