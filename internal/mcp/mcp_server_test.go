@@ -7,6 +7,8 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	contracts "github.com/repoguide/repoguide-core/contracts/v1"
 )
 
 func TestHandleMCPRequestListsTools(t *testing.T) {
@@ -139,6 +141,47 @@ func TestCallMCPToolUnderstandTaskFallsBackWithoutBackend(t *testing.T) {
 	}
 	if !strings.Contains(text, "stand on their own") {
 		t.Fatalf("expected fallback response to explain MCP-only discoverability, got: %s", text)
+	}
+}
+
+func TestSelectCandidateTopicsUsesRankedIDsAndLimit(t *testing.T) {
+	topics := []contracts.MCPTopicSummary{
+		{ID: "t1", Name: "One", Summary: "first"},
+		{ID: "t2", Name: "Two", Summary: "second"},
+		{ID: "t3", Name: "Three", Summary: "third"},
+		{ID: "t4", Name: "Four", Summary: "fourth"},
+		{ID: "t5", Name: "Five", Summary: "fifth"},
+		{ID: "t6", Name: "Six", Summary: "sixth"},
+	}
+
+	got := selectCandidateTopics(topics, []string{"t4", "missing", "t2", "t4", "t6", "t1"}, 5)
+	if len(got) != 4 {
+		t.Fatalf("len(got) = %d, want 4", len(got))
+	}
+	wantIDs := []string{"t4", "t2", "t6", "t1"}
+	for i, want := range wantIDs {
+		if got[i].ID != want {
+			t.Fatalf("got[%d].ID = %q, want %q", i, got[i].ID, want)
+		}
+	}
+}
+
+func TestSelectCandidateTopicsFallsBackToFirstFive(t *testing.T) {
+	topics := []contracts.MCPTopicSummary{
+		{ID: "t1", Name: "One", Summary: "first"},
+		{ID: "t2", Name: "Two", Summary: "second"},
+		{ID: "t3", Name: "Three", Summary: "third"},
+		{ID: "t4", Name: "Four", Summary: "fourth"},
+		{ID: "t5", Name: "Five", Summary: "fifth"},
+		{ID: "t6", Name: "Six", Summary: "sixth"},
+	}
+
+	got := selectCandidateTopics(topics, nil, 5)
+	if len(got) != 5 {
+		t.Fatalf("len(got) = %d, want 5", len(got))
+	}
+	if got[4].ID != "t5" {
+		t.Fatalf("got[4].ID = %q, want t5", got[4].ID)
 	}
 }
 

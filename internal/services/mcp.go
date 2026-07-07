@@ -23,10 +23,11 @@ type MCPService struct {
 
 type UnderstandTaskOutput struct {
 	// "ok" | "needs_clarification"
-	Status      string
-	TopicID     string
-	ContextText string // formatted topic context ready to show the agent
-	Explanation string // preamble before context
+	Status            string
+	TopicID           string
+	ContextText       string // formatted topic context ready to show the agent
+	Explanation       string // preamble before context
+	CandidateTopicIDs []string
 }
 
 // ── Tool implementations ──────────────────────────────────────────────────────
@@ -102,7 +103,10 @@ func (s *MCPService) UnderstandTask(ctx context.Context, repoID, task, topicID s
 		return nil, fmt.Errorf("AI topic select: %w", err)
 	}
 	if result.Status == "needs_clarification" || result.TopicID == "" {
-		return &UnderstandTaskOutput{Status: "needs_clarification"}, nil
+		return &UnderstandTaskOutput{
+			Status:            "needs_clarification",
+			CandidateTopicIDs: result.CandidateTopicIDs,
+		}, nil
 	}
 	var chosen *model.TopicContext
 	for i := range topics {

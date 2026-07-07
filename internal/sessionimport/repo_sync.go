@@ -1085,10 +1085,11 @@ func (c CloudClient) localGetMCPUnderstandTask(repoID, task, topicID string, pro
 		return nil, err
 	}
 	return &MCPUnderstandTaskResult{
-		Status:      out.Status,
-		Explanation: out.Explanation,
-		TopicID:     out.TopicID,
-		ContextText: out.ContextText,
+		Status:            out.Status,
+		Explanation:       out.Explanation,
+		TopicID:           out.TopicID,
+		ContextText:       out.ContextText,
+		CandidateTopicIDs: out.CandidateTopicIDs,
 	}, nil
 }
 

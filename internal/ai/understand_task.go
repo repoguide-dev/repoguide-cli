@@ -55,16 +55,22 @@ func SelectTopic(ctx context.Context, repoContext string, topics []TopicSummary,
 		raw = strings.TrimSpace(strings.TrimSuffix(strings.TrimSpace(after), "```"))
 	}
 	var result struct {
-		Status   string `json:"status"`
-		TopicID  string `json:"topic_id"`
-		Reason   string `json:"reason"`
-		Question string `json:"question"`
+		Status            string   `json:"status"`
+		TopicID           string   `json:"topic_id"`
+		Reason            string   `json:"reason"`
+		Question          string   `json:"question"`
+		CandidateTopicIDs []string `json:"candidate_topic_ids"`
 	}
 	if err := json.Unmarshal([]byte(raw), &result); err != nil {
 		return SelectTopicResult{}, usage, fmt.Errorf("topic chooser returned non-JSON: %w", err)
 	}
 	if result.Status == "needs_clarification" {
-		return SelectTopicResult{Status: "needs_clarification", Reason: result.Reason, Question: result.Question}, usage, nil
+		return SelectTopicResult{
+			Status:            "needs_clarification",
+			Reason:            result.Reason,
+			Question:          result.Question,
+			CandidateTopicIDs: result.CandidateTopicIDs,
+		}, usage, nil
 	}
 	return SelectTopicResult{TopicID: result.TopicID}, usage, nil
 }

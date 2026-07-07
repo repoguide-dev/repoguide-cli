@@ -13,6 +13,7 @@ import (
 	"unicode/utf8"
 
 	"github.com/repoguide/repoguide-cli/internal/services"
+	contracts "github.com/repoguide/repoguide-core/contracts/v1"
 )
 
 const mcpProtocolVersion = "2024-11-05"
@@ -504,7 +505,7 @@ func callMCPTool(name string, arguments map[string]any, client *CloudClient) (ma
 			}
 			var sb strings.Builder
 			sb.WriteString("Task maps to multiple topics. Call `repoguide_get_repo_experience` again with your chosen `topic_id`:\n\n")
-			for _, t := range topics {
+			for _, t := range selectCandidateTopics(topics, result.CandidateTopicIDs, 5) {
 				fmt.Fprintf(&sb, "- `%s`: **%s** - %s\n", t.ID, t.Name, t.Summary)
 			}
 			return map[string]any{"text": sb.String()}, "", nil
@@ -728,6 +729,39 @@ func buildPriorPatterns(topic repoguideTopic) []string {
 		patterns = append(patterns, "Guidance files can narrow the next code area without touching behavior first.")
 	}
 	return patterns
+}
+
+func selectCandidateTopics(topics []contracts.MCPTopicSummary, candidateIDs []string, limit int) []contracts.MCPTopicSummary {
+	if limit <= 0 || len(topics) == 0 {
+		return nil
+	}
+	byID := make(map[string]contracts.MCPTopicSummary, len(topics))
+	for _, topic := range topics {
+		byID[topic.ID] = topic
+	}
+	selected := make([]contracts.MCPTopicSummary, 0, min(limit, len(topics)))
+	seen := make(map[string]struct{}, min(limit, len(topics)))
+	for _, id := range candidateIDs {
+		if len(selected) >= limit {
+			break
+		}
+		topic, ok := byID[id]
+		if !ok {
+			continue
+		}
+		if _, dup := seen[id]; dup {
+			continue
+		}
+		selected = append(selected, topic)
+		seen[id] = struct{}{}
+	}
+	if len(selected) > 0 {
+		return selected
+	}
+	if len(topics) > limit {
+		return topics[:limit]
+	}
+	return topics
 }
 
 func buildMCPMessage(payload any) []byte {
