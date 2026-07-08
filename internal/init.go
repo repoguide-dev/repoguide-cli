@@ -564,6 +564,58 @@ func InitRepoAt(repoRoot string, opts InitOptions) (InitResult, error) {
 	}, nil
 }
 
+// LinkRepoAt binds an existing git checkout to a specific RepoGuide repo ID.
+// It is used for shared/team repos where the cloud repo already exists.
+func LinkRepoAt(repoRoot, repoID, mode string) (InitResult, error) {
+	root, err := gitOutputAt(repoRoot, "rev-parse", "--show-toplevel")
+	if err != nil || root == "" {
+		return InitResult{}, ErrNotGitRepo
+	}
+	repoID = strings.TrimSpace(repoID)
+	if repoID == "" {
+		return InitResult{}, fmt.Errorf("repo ID required")
+	}
+	storeRoot := home(".repoguide")
+	storeDir := filepath.Join(storeRoot, "repos", repoID)
+
+	currentRepoID, _ := gitOutputAt(root, "config", "--get", "repoguide.repoId")
+	if currentRepoID != "" && currentRepoID != repoID {
+		return InitResult{}, fmt.Errorf("repository already initialized with %s", currentRepoID)
+	}
+	if err := ensureStore(storeRoot, storeDir, root, repoID, mode); err != nil {
+		return InitResult{}, err
+	}
+	if _, err := gitOutputAt(root, "config", "repoguide.enabled", "true"); err != nil {
+		return InitResult{}, err
+	}
+	if _, err := gitOutputAt(root, "config", "repoguide.repoId", repoID); err != nil {
+		return InitResult{}, err
+	}
+	if _, err := gitOutputAt(root, "config", "repoguide.version", fmt.Sprintf("%d", repoguideVersion)); err != nil {
+		return InitResult{}, err
+	}
+	cfg, err := LoadRepoConfigFile(storeDir)
+	if err != nil {
+		return InitResult{}, err
+	}
+	setCommitHooksEnabled(&cfg, false)
+	if err := SaveRepoConfigFile(storeDir, cfg); err != nil {
+		return InitResult{}, err
+	}
+	hooksPath := readHooksPathAt(root)
+	return InitResult{
+		RepoRoot:           root,
+		RepoID:             repoID,
+		StoreDir:           storeDir,
+		GlobalConfig:       filepath.Join(storeRoot, "config.json"),
+		Hooks:              detectHookStatusAt(root),
+		HooksPath:          hooksPath,
+		HooksPathCustom:    hooksPath != "",
+		CommitHooksEnabled: commitHooksEnabled(cfg),
+		Agents:             DetectInitSources(root),
+	}, nil
+}
+
 func writeJSON(path string, value any) error {
 	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
 		return err

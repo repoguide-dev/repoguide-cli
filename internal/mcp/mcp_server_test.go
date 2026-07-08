@@ -3,6 +3,8 @@ package mcp
 import (
 	"bytes"
 	"encoding/json"
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"strings"
@@ -141,6 +143,81 @@ func TestCallMCPToolUnderstandTaskFallsBackWithoutBackend(t *testing.T) {
 	}
 	if !strings.Contains(text, "stand on their own") {
 		t.Fatalf("expected fallback response to explain MCP-only discoverability, got: %s", text)
+	}
+}
+
+func TestCallMCPToolUnderstandTaskAutoSelectsSingleValidCandidate(t *testing.T) {
+	var understandCalls int
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.Method == http.MethodPost && r.URL.Path == "/api/repos/test-repo/mcp/understand-task":
+			understandCalls++
+			var req contracts.MCPUnderstandTaskRequest
+			if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+				t.Fatalf("decode understand-task request: %v", err)
+			}
+			w.Header().Set("Content-Type", "application/json")
+			if understandCalls == 1 {
+				if req.TopicID != "" {
+					t.Fatalf("first understand-task topic_id = %q, want empty", req.TopicID)
+				}
+				_ = json.NewEncoder(w).Encode(contracts.MCPUnderstandTaskResult{
+					Status:            "needs_clarification",
+					CandidateTopicIDs: []string{"missing", "t2", "missing"},
+				})
+				return
+			}
+			if req.TopicID != "t2" {
+				t.Fatalf("second understand-task topic_id = %q, want t2", req.TopicID)
+			}
+			_ = json.NewEncoder(w).Encode(contracts.MCPUnderstandTaskResult{
+				Explanation: "Resolved topic.",
+				TopicID:     "t2",
+				ContextText: "Topic: Two\nSummary: second",
+			})
+		case r.Method == http.MethodGet && r.URL.Path == "/api/repos/test-repo/mcp/topics":
+			w.Header().Set("Content-Type", "application/json")
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"topics": []contracts.MCPTopicSummary{
+					{ID: "t1", Name: "One", Summary: "first"},
+					{ID: "t2", Name: "Two", Summary: "second"},
+				},
+			})
+		case r.Method == http.MethodGet && r.URL.Path == "/api/repos/test-repo/mcp/topics/t2":
+			w.Header().Set("Content-Type", "application/json")
+			_ = json.NewEncoder(w).Encode(contracts.MCPTopicContext{
+				ID:      "t2",
+				Name:    "Two",
+				Summary: "second",
+			})
+		case r.Method == http.MethodGet && r.URL.Path == "/api/repos/test-repo/mcp/search":
+			w.Header().Set("Content-Type", "application/json")
+			_ = json.NewEncoder(w).Encode(contracts.MCPSearchContext{})
+		default:
+			t.Fatalf("unexpected request: %s %s", r.Method, r.URL.String())
+		}
+	}))
+	defer server.Close()
+
+	result, _, err := callMCPTool("repoguide_get_repo_experience", map[string]any{
+		"task":    "add a new CLI command",
+		"repo_id": "test-repo",
+	}, &CloudClient{BaseURL: server.URL, Token: "test-token"})
+	if err != nil {
+		t.Fatalf("understand task error: %v", err)
+	}
+	text, ok := result["text"].(string)
+	if !ok || text == "" {
+		t.Fatalf("expected non-empty text, got %T: %v", result["text"], result["text"])
+	}
+	if strings.Contains(text, "Task maps to multiple topics") {
+		t.Fatalf("expected auto-selected experience, got clarification text: %s", text)
+	}
+	if !strings.Contains(text, "Resolved topic.") {
+		t.Fatalf("expected resolved explanation in response, got: %s", text)
+	}
+	if understandCalls != 2 {
+		t.Fatalf("understand-task call count = %d, want 2", understandCalls)
 	}
 }
 

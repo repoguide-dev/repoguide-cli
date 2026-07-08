@@ -1,6 +1,10 @@
 package mcp
 
-import "testing"
+import (
+	"os"
+	"path/filepath"
+	"testing"
+)
 
 func TestCodexMarketplaceManifestIncludesCodexProductAndPlugin(t *testing.T) {
 	manifest := codexMarketplaceManifest()
@@ -80,5 +84,86 @@ func TestCodexPluginMCPConfigUsesRepoGuideServer(t *testing.T) {
 	args, ok := server["args"].([]string)
 	if !ok || len(args) != 2 || args[0] != "mcp" || args[1] != "serve" {
 		t.Fatalf("args = %#v, want [mcp serve]", server["args"])
+	}
+}
+
+func TestCodexPluginHooksConfigInstallsPromptAndStopHooks(t *testing.T) {
+	cfg := codexPluginHooksConfig("/tmp/repoguide")
+	hooks, ok := cfg["hooks"].(map[string]any)
+	if !ok {
+		t.Fatalf("hooks = %T, want map[string]any", cfg["hooks"])
+	}
+	for event, wantCommand := range map[string]string{
+		"UserPromptSubmit": "\"/tmp/repoguide\" mcp hook prompt",
+		"Stop":             "\"/tmp/repoguide\" mcp hook stop",
+	} {
+		groups, ok := hooks[event].([]map[string]any)
+		if !ok || len(groups) != 1 {
+			t.Fatalf("%s groups = %#v, want one hook group", event, hooks[event])
+		}
+		entries, ok := groups[0]["hooks"].([]map[string]any)
+		if !ok || len(entries) != 1 {
+			t.Fatalf("%s hooks = %#v, want one command hook", event, groups[0]["hooks"])
+		}
+		if got := entries[0]["command"]; got != wantCommand {
+			t.Fatalf("%s command = %v, want %q", event, got, wantCommand)
+		}
+		if got := entries[0]["timeout"]; got != 5 {
+			t.Fatalf("%s timeout = %v, want 5", event, got)
+		}
+	}
+}
+
+func TestInstallCodexPluginWritesHooksByDefault(t *testing.T) {
+	tempDir := t.TempDir()
+	homeDir := filepath.Join(tempDir, "home")
+	binDir := filepath.Join(tempDir, "bin")
+	if err := os.MkdirAll(homeDir, 0o755); err != nil {
+		t.Fatalf("MkdirAll(home): %v", err)
+	}
+	if err := os.MkdirAll(binDir, 0o755); err != nil {
+		t.Fatalf("MkdirAll(bin): %v", err)
+	}
+	t.Setenv("HOME", homeDir)
+	t.Setenv("PATH", binDir+string(os.PathListSeparator)+os.Getenv("PATH"))
+	codexStub := filepath.Join(binDir, "codex")
+	if err := os.WriteFile(codexStub, []byte("#!/bin/sh\nexit 0\n"), 0o755); err != nil {
+		t.Fatalf("WriteFile(codex stub): %v", err)
+	}
+
+	if err := installCodexPlugin("/tmp/repoguide", true); err != nil {
+		t.Fatalf("installCodexPlugin: %v", err)
+	}
+
+	path := filepath.Join(homeDir, ".repoguide", "codex-marketplace", "plugins", "repoguide", "hooks", "hooks.json")
+	if _, err := os.Stat(path); err != nil {
+		t.Fatalf("expected hooks.json to be written: %v", err)
+	}
+}
+
+func TestInstallCodexPluginSkipsHooksWhenDisabled(t *testing.T) {
+	tempDir := t.TempDir()
+	homeDir := filepath.Join(tempDir, "home")
+	binDir := filepath.Join(tempDir, "bin")
+	if err := os.MkdirAll(homeDir, 0o755); err != nil {
+		t.Fatalf("MkdirAll(home): %v", err)
+	}
+	if err := os.MkdirAll(binDir, 0o755); err != nil {
+		t.Fatalf("MkdirAll(bin): %v", err)
+	}
+	t.Setenv("HOME", homeDir)
+	t.Setenv("PATH", binDir+string(os.PathListSeparator)+os.Getenv("PATH"))
+	codexStub := filepath.Join(binDir, "codex")
+	if err := os.WriteFile(codexStub, []byte("#!/bin/sh\nexit 0\n"), 0o755); err != nil {
+		t.Fatalf("WriteFile(codex stub): %v", err)
+	}
+
+	if err := installCodexPlugin("/tmp/repoguide", false); err != nil {
+		t.Fatalf("installCodexPlugin: %v", err)
+	}
+
+	path := filepath.Join(homeDir, ".repoguide", "codex-marketplace", "plugins", "repoguide", "hooks", "hooks.json")
+	if _, err := os.Stat(path); !os.IsNotExist(err) {
+		t.Fatalf("expected hooks.json to be absent, stat err = %v", err)
 	}
 }

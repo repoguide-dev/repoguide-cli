@@ -23,32 +23,32 @@ type mcpClientDef struct {
 	name         string
 	detect       func() bool
 	isConfigured func() bool
-	install      func(string) (string, error)
+	install      func(string, bool) (string, error)
 }
 
 func allMCPClientDefs() []mcpClientDef {
 	return []mcpClientDef{
-		{"Claude Code", detectClaudeCodeMCP, isClaudePluginConfigured, func(bin string) (string, error) {
+		{"Claude Code", detectClaudeCodeMCP, isClaudePluginConfigured, func(bin string, _ bool) (string, error) {
 			_ = RemoveViaMCPRemove("claude") // migrate away from old mcp-add entry
 			return InstallClaudePlugin(bin)
 		}},
-		{"Codex", detectCodexMCP, isCodexPluginConfigured, func(bin string) (string, error) {
+		{"Codex", detectCodexMCP, isCodexPluginConfigured, func(bin string, installHooks bool) (string, error) {
 			_ = RemoveViaMCPRemove("codex") // migrate away from old mcp-add entry
-			return "", installCodexPlugin(bin)
+			return "", installCodexPlugin(bin, installHooks)
 		}},
-		{"Cursor", detectCursorMCP, isCursorMCPConfigured, func(bin string) (string, error) {
+		{"Cursor", detectCursorMCP, isCursorMCPConfigured, func(bin string, _ bool) (string, error) {
 			path := cursorMCPConfigPath()
 			return path, patchMCPJSON(path, bin)
 		}},
-		{"OpenCode", detectOpencodeMCP, isOpencodeMCPConfigured, func(bin string) (string, error) {
+		{"OpenCode", detectOpencodeMCP, isOpencodeMCPConfigured, func(bin string, _ bool) (string, error) {
 			path := opencodeConfigPath()
 			return path, patchOpencodeMCPJSON(path, bin)
 		}},
-		{"GitHub Copilot", detectCopilotMCP, isCopilotMCPConfigured, func(bin string) (string, error) {
+		{"GitHub Copilot", detectCopilotMCP, isCopilotMCPConfigured, func(bin string, _ bool) (string, error) {
 			path := copilotMCPConfigPath()
 			return path, patchCopilotMCPJSON(path, bin)
 		}},
-		{"Gemini CLI", detectGeminiMCP, isGeminiMCPConfigured, func(bin string) (string, error) {
+		{"Gemini CLI", detectGeminiMCP, isGeminiMCPConfigured, func(bin string, _ bool) (string, error) {
 			path := geminiMCPConfigPath()
 			return path, patchGeminiMCPJSON(path, bin)
 		}},
@@ -152,11 +152,11 @@ func DetectConfiguredMCPClients() []string {
 // repoguide MCP server in each. Returns one result per detected client.
 // If nothing is detected, fallback contains a JSON config block to paste manually.
 func InstallMCPClients() ([]MCPClientResult, string) {
-	return InstallSelectedMCPClients(DetectMCPClients())
+	return InstallSelectedMCPClients(DetectMCPClients(), true)
 }
 
 // InstallSelectedMCPClients installs only the named clients.
-func InstallSelectedMCPClients(names []string) ([]MCPClientResult, string) {
+func InstallSelectedMCPClients(names []string, installHooks bool) ([]MCPClientResult, string) {
 	self := RepoGuideBinaryPath()
 	nameSet := make(map[string]bool, len(names))
 	for _, n := range names {
@@ -168,7 +168,7 @@ func InstallSelectedMCPClients(names []string) ([]MCPClientResult, string) {
 		if !nameSet[c.name] {
 			continue
 		}
-		configPath, err := c.install(self)
+		configPath, err := c.install(self, installHooks)
 		results = append(results, MCPClientResult{
 			Name:       c.name,
 			Detected:   true,
@@ -245,7 +245,7 @@ const legacyHindsightMarketplace = "hindsight"
 
 // installCodexPlugin writes a local marketplace at ~/.repoguide/codex-marketplace/,
 // registers it with codex, then installs the repoguide plugin from it.
-func installCodexPlugin(binPath string) error {
+func installCodexPlugin(binPath string, installHooks bool) error {
 	marketDir := home(".repoguide", "codex-marketplace")
 	pluginDir := filepath.Join(marketDir, "plugins", "repoguide")
 
@@ -267,6 +267,16 @@ func installCodexPlugin(binPath string) error {
 	mcp := codexPluginMCPConfig(binPath)
 	if err := writeJSON(filepath.Join(pluginDir, ".mcp.json"), mcp); err != nil {
 		return err
+	}
+	if installHooks {
+		if err := os.MkdirAll(filepath.Join(pluginDir, "hooks"), 0o755); err != nil {
+			return err
+		}
+		if err := writeJSON(filepath.Join(pluginDir, "hooks", "hooks.json"), codexPluginHooksConfig(binPath)); err != nil {
+			return err
+		}
+	} else {
+		_ = os.RemoveAll(filepath.Join(pluginDir, "hooks"))
 	}
 
 	removeLegacyCodexPlugin()
@@ -348,6 +358,27 @@ func codexPluginMCPConfig(binPath string) map[string]any {
 				"command": binPath,
 				"args":    []string{"mcp", "serve"},
 			},
+		},
+	}
+}
+
+func codexPluginHooksConfig(binPath string) map[string]any {
+	return map[string]any{
+		"hooks": map[string]any{
+			"UserPromptSubmit": []map[string]any{{
+				"hooks": []map[string]any{{
+					"type":    "command",
+					"command": "\"" + binPath + "\" mcp hook prompt",
+					"timeout": 5,
+				}},
+			}},
+			"Stop": []map[string]any{{
+				"hooks": []map[string]any{{
+					"type":    "command",
+					"command": "\"" + binPath + "\" mcp hook stop",
+					"timeout": 5,
+				}},
+			}},
 		},
 	}
 }

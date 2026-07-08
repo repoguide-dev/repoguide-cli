@@ -122,8 +122,17 @@ func validateBackendRequestPath(path string) error {
 
 func isAllowedBackendRequestPath(path string) bool {
 	switch path {
-	case "/version", "/api/limits", "/api/auth/me", "/api/auth/refresh", "/api/repos":
+	case "/version", "/api/limits", "/api/auth/me", "/api/auth/refresh", "/api/repos", "/api/teams", "/api/teams/join":
 		return true
+	}
+	if strings.HasPrefix(path, "/api/teams/") {
+		parts := strings.Split(strings.TrimPrefix(path, "/api/teams/"), "/")
+		if len(parts) == 0 || parts[0] == "" {
+			return false
+		}
+		return len(parts) == 1 ||
+			(len(parts) == 2 && (parts[1] == "repos" || parts[1] == "members")) ||
+			(len(parts) == 4 && parts[1] == "repos" && parts[3] == "merge")
 	}
 	if !strings.HasPrefix(path, "/api/repos/") {
 		return false
@@ -216,7 +225,7 @@ func (c CloudClient) RegisterRepo(repoID, repoRoot string) error {
 	if strings.TrimSpace(c.Token) == "" || strings.TrimSpace(c.BaseURL) == "" {
 		return nil
 	}
-	repoURL := githubRepoURL(repoRoot)
+	repoURL := remoteRepoURL(repoRoot)
 	body, err := json.Marshal(map[string]any{
 		"repo_id":   repoID,
 		"repo_root": repoRoot,
@@ -246,7 +255,7 @@ func (c CloudClient) RegisterRepo(repoID, repoRoot string) error {
 	return nil
 }
 
-func githubRepoURL(repoRoot string) string {
+func remoteRepoURL(repoRoot string) string {
 	out, err := exec.Command("git", "-C", repoRoot, "remote", "get-url", "origin").Output()
 	if err != nil {
 		return ""
@@ -276,8 +285,115 @@ func githubRepoURL(repoRoot string) string {
 		}
 		return "https://github.com/" + path
 	default:
-		return ""
+		return raw
 	}
+}
+
+func githubRepoURL(repoRoot string) string {
+	raw := remoteRepoURL(repoRoot)
+	if strings.HasPrefix(raw, "https://github.com/") {
+		return raw
+	}
+	return ""
+}
+
+type TeamSummary struct {
+	ID         string `json:"id"`
+	Name       string `json:"name"`
+	InviteCode string `json:"invite_code"`
+}
+
+type TeamMembership struct {
+	Team TeamSummary `json:"team"`
+	Role string      `json:"role"`
+}
+
+type TeamRepo struct {
+	RepoID         string `json:"repo_id"`
+	TeamID         string `json:"team_id,omitempty"`
+	RepoRoot       string `json:"repo_root,omitempty"`
+	RepoName       string `json:"repo_name,omitempty"`
+	RepoURL        string `json:"repo_url,omitempty"`
+	ConnectCommand string `json:"connect_command,omitempty"`
+}
+
+func (c CloudClient) JoinTeam(inviteCode string) (*TeamSummary, error) {
+	if strings.TrimSpace(c.Token) == "" || strings.TrimSpace(c.BaseURL) == "" {
+		return nil, nil
+	}
+	body, err := json.Marshal(map[string]string{"invite_code": strings.TrimSpace(inviteCode)})
+	if err != nil {
+		return nil, err
+	}
+	req, err := c.newRequest(http.MethodPost, "/api/teams/join", bytes.NewReader(body))
+	if err != nil {
+		return nil, err
+	}
+	req.Header.Set("Authorization", "Bearer "+c.Token)
+	req.Header.Set("Content-Type", "application/json")
+	resp, err := c.httpClient().Do(req)
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode >= 300 {
+		return nil, backendRequestError("team join failed", resp)
+	}
+	var payload struct {
+		Team TeamSummary `json:"team"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&payload); err != nil {
+		return nil, err
+	}
+	return &payload.Team, nil
+}
+
+func (c CloudClient) ListTeamRepos(teamID string) ([]TeamRepo, error) {
+	if strings.TrimSpace(c.Token) == "" || strings.TrimSpace(c.BaseURL) == "" {
+		return nil, nil
+	}
+	req, err := c.newRequest(http.MethodGet, "/api/teams/"+url.PathEscape(teamID)+"/repos", nil)
+	if err != nil {
+		return nil, err
+	}
+	req.Header.Set("Authorization", "Bearer "+c.Token)
+	resp, err := c.httpClient().Do(req)
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode >= 300 {
+		return nil, backendRequestError("team repo list failed", resp)
+	}
+	var payload struct {
+		Repos []TeamRepo `json:"repos"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&payload); err != nil {
+		return nil, err
+	}
+	return payload.Repos, nil
+}
+
+func (c CloudClient) MergeTeamRepo(teamID, targetRepoID, sourceRepoID string) error {
+	body, err := json.Marshal(map[string]string{"source_repo_id": strings.TrimSpace(sourceRepoID)})
+	if err != nil {
+		return err
+	}
+	req, err := c.newRequest(http.MethodPost, "/api/teams/"+url.PathEscape(teamID)+"/repos/"+url.PathEscape(targetRepoID)+"/merge", bytes.NewReader(body))
+	if err != nil {
+		return err
+	}
+	req.Header.Set("Authorization", "Bearer "+c.Token)
+	req.Header.Set("Content-Type", "application/json")
+	resp, err := c.httpClient().Do(req)
+	if err != nil {
+		return err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode >= 300 {
+		return backendRequestError("team repo merge failed", resp)
+	}
+	return nil
 }
 
 func (c CloudClient) DeleteRepo(repoID string) error {

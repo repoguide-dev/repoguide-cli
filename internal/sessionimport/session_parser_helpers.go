@@ -3,9 +3,14 @@ package sessionimport
 import (
 	"encoding/json"
 	"path/filepath"
+	"regexp"
 	"sort"
 	"strings"
 )
+
+// sedScriptPattern matches sed/perl-style scripts like s/a/b/g or y/a/b/ so they
+// aren't misparsed as file paths when quote-stripped from a Bash command.
+var sedScriptPattern = regexp.MustCompile(`^[a-zA-Z]?[/#|,:].+[/#|,:]`)
 
 func derivePathsFromShell(command string) ([]string, []string) {
 	command = strings.TrimSpace(command)
@@ -35,7 +40,11 @@ func derivePathsFromShell(command string) ([]string, []string) {
 		}
 		isRead := shellSegmentLooksReadOnly(tokens)
 		isWrite := shellSegmentLooksWrite(tokens)
+		isSed := tokens[0] == "sed"
 		for _, token := range tokens {
+			if isSed && sedScriptPattern.MatchString(strings.Trim(token, "\"'`")) {
+				continue
+			}
 			path := normalizePathToken(token)
 			if path == "" {
 				continue

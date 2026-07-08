@@ -13,7 +13,6 @@ import (
 	"strings"
 	"time"
 
-	tea "github.com/charmbracelet/bubbletea"
 	clientauth "github.com/repoguide/repoguide-cli/internal/auth"
 	"github.com/repoguide/repoguide-cli/internal/sessionimport"
 	"github.com/spf13/cobra"
@@ -129,12 +128,7 @@ var logoutCmd = &cobra.Command{
 }
 
 func deviceFlow(mode string) error {
-	if err := runDeviceLogin(mode); err != nil {
-		return err
-	}
-	model := newSessionsModel("", sessionsModelOptions{repoFilter: detectCwdGitRoot()})
-	_, err := tea.NewProgram(model, tea.WithAltScreen()).Run()
-	return err
+	return runDeviceLogin(mode)
 }
 
 // deviceLogin runs the device-code auth flow and saves credentials, without launching any TUI after.

@@ -498,14 +498,27 @@ func callMCPTool(name string, arguments map[string]any, client *CloudClient) (ma
 		if result == nil {
 			return map[string]any{"text": UnderstandTaskResponse(repoID)}, "", nil
 		}
+		var clarificationCandidates []contracts.MCPTopicSummary
 		if result.Status == "needs_clarification" {
 			topics, err := client.GetMCPTopics(repoID)
 			if err != nil || len(topics) == 0 {
 				return map[string]any{"text": "Task maps to multiple topics. Call `repoguide_get_repo_experience` again with your chosen `topic_id` from `repoguide_list_topics`."}, "", nil
 			}
+			clarificationCandidates = selectCandidateTopics(topics, result.CandidateTopicIDs, 5)
+			if len(clarificationCandidates) == 1 {
+				resolved, err := client.GetMCPUnderstandTask(repoID, input.Task, clarificationCandidates[0].ID, sessionPrompts)
+				if err != nil {
+					return nil, "", fmt.Errorf("understand-task auto-select failed: %w", err)
+				}
+				if resolved != nil && resolved.Status != "needs_clarification" {
+					result = resolved
+				}
+			}
+		}
+		if result.Status == "needs_clarification" {
 			var sb strings.Builder
 			sb.WriteString("Task maps to multiple topics. Call `repoguide_get_repo_experience` again with your chosen `topic_id`:\n\n")
-			for _, t := range selectCandidateTopics(topics, result.CandidateTopicIDs, 5) {
+			for _, t := range clarificationCandidates {
 				fmt.Fprintf(&sb, "- `%s`: **%s** - %s\n", t.ID, t.Name, t.Summary)
 			}
 			return map[string]any{"text": sb.String()}, "", nil

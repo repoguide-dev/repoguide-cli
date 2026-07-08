@@ -46,7 +46,7 @@ func init() {
 	mcpActivityCmd.Flags().String("repo", "", "Filter activity to a specific repo path")
 	mcpActivityCmd.Flags().Int("limit", 20, "Maximum number of activity entries to show")
 	mcpInstallCmd.Flags().Bool("approve", false, "Approve all prompts non-interactively (for scripts)")
-	mcpInstallCmd.Flags().Bool("no-hooks", false, "Skip installing Claude Code hooks (still installs the plugin/MCP registration; for benchmark/test environments)")
+	mcpInstallCmd.Flags().Bool("no-hooks", false, "Skip installing Claude Code and Codex hooks (still installs the plugin/MCP registration; for benchmark/test environments)")
 	mcpServeCmd.Flags().String("debug", "", "Start a local HTTP debug server at this address (e.g. :9090)")
 	mcpServeCmd.Flags().Bool("local", false, "Force local SQLite mode even when a cloud token is present")
 }
@@ -206,7 +206,7 @@ func runMCPFix(_ *cobra.Command, _ []string) error {
 		}
 	}
 
-	results, _ := mcpinternal.InstallSelectedMCPClients(detected)
+	results, _ := mcpinternal.InstallSelectedMCPClients(detected, true)
 	claudeFixed := false
 	for _, r := range results {
 		if r.Configured {
@@ -751,7 +751,7 @@ func (m mcpInstallModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if len(detected) == 0 {
 			m.view = mcpInstallClients
 			return m, tea.Batch(m.spinner.Tick, func() tea.Msg {
-				results, fallback := mcpinternal.InstallSelectedMCPClients(nil)
+				results, fallback := mcpinternal.InstallSelectedMCPClients(nil, true)
 				return mcpClientsDoneMsg{results: results, fallback: fallback}
 			})
 		}
@@ -893,7 +893,7 @@ func (m mcpInstallModel) updateClientSelect(msg tea.KeyMsg) (tea.Model, tea.Cmd)
 			if claudeSelected && currentRepo != "" {
 				_, _ = mcpinternal.InstructRepoForClaude(currentRepo)
 			}
-			results, fallback := mcpinternal.InstallSelectedMCPClients(sel)
+			results, fallback := mcpinternal.InstallSelectedMCPClients(sel, true)
 			return mcpClientsDoneMsg{results: results, fallback: fallback}
 		})
 	}
@@ -1175,7 +1175,7 @@ func runMCPInstallApprove(noHooks bool) error {
 	if claudeDetected && len(repos) > 0 && !noHooks {
 		_, _ = mcpinternal.InstructRepoForClaude(repos[0])
 	}
-	results, fallback := mcpinternal.InstallSelectedMCPClients(filtered)
+	results, fallback := mcpinternal.InstallSelectedMCPClients(filtered, !noHooks)
 	for _, r := range results {
 		if r.Configured {
 			fmt.Printf("  ✓ %s configured\n", r.Name)

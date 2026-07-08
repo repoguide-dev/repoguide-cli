@@ -118,6 +118,21 @@ func TestEnsureActiveLoginPromptsAgainForInvalidSavedToken(t *testing.T) {
 	}
 }
 
+func TestDeviceFlowOnlyRunsDeviceLogin(t *testing.T) {
+	prev := runDeviceLogin
+	runDeviceLogin = func(mode string) error {
+		if mode != "login" {
+			t.Fatalf("mode = %q, want login", mode)
+		}
+		return nil
+	}
+	defer func() { runDeviceLogin = prev }()
+
+	if err := deviceFlow("login"); err != nil {
+		t.Fatalf("deviceFlow returned error: %v", err)
+	}
+}
+
 func TestSetupRepoModelDefaultsToCurrentRepo(t *testing.T) {
 	repos := []string{"/tmp/alpha", "/tmp/beta", "/tmp/gamma"}
 	m := newSetupRepoModel(repos, "/tmp/beta")

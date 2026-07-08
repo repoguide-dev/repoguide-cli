@@ -20,7 +20,7 @@ import (
 
 func init() {
 	setupCmd.Flags().Bool("offline", false, "Initialize in offline mode (no backend sync)")
-	setupCmd.Flags().Bool("no-hooks", false, "Skip installing Claude Code hooks (still installs the plugin/MCP registration; for benchmark/test environments)")
+	setupCmd.Flags().Bool("no-hooks", false, "Skip installing Claude Code and Codex hooks (still installs the plugin/MCP registration; for benchmark/test environments)")
 	setupCmd.Flags().Bool("ci", false, "")
 	_ = setupCmd.Flags().MarkHidden("ci")
 	root.AddCommand(setupCmd)
