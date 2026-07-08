@@ -74,6 +74,50 @@ func TestCILoginDoesNotPrintToken(t *testing.T) {
 	_ = os.Getenv("REPOGUIDE_CI_TOKEN") // accessed; not printed
 }
 
+func TestEnsureActiveLoginPromptsAgainForInvalidSavedToken(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/api/auth/me" {
+			http.NotFound(w, r)
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusUnauthorized)
+		_, _ = w.Write([]byte(`{"error":"invalid token"}`))
+	}))
+	defer srv.Close()
+
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	if err := clientauth.Save(clientauth.Token{Token: "stale-token", Email: "stale@repoguide.test"}); err != nil {
+		t.Fatalf("save token: %v", err)
+	}
+	if err := root.PersistentFlags().Set("backend-url", srv.URL); err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = root.PersistentFlags().Set("backend-url", "") }()
+
+	called := 0
+	prev := runDeviceLogin
+	runDeviceLogin = func(mode string) error {
+		called++
+		if mode != "login" {
+			t.Fatalf("mode = %q, want login", mode)
+		}
+		return nil
+	}
+	defer func() { runDeviceLogin = prev }()
+
+	if err := ensureActiveLogin(); err != nil {
+		t.Fatalf("ensureActiveLogin returned error: %v", err)
+	}
+	if called != 1 {
+		t.Fatalf("runDeviceLogin called %d times, want 1", called)
+	}
+	if _, ok := clientauth.Load(); ok {
+		t.Fatal("stale token should be cleared before forcing a fresh login")
+	}
+}
+
 func TestSetupRepoModelDefaultsToCurrentRepo(t *testing.T) {
 	repos := []string{"/tmp/alpha", "/tmp/beta", "/tmp/gamma"}
 	m := newSetupRepoModel(repos, "/tmp/beta")

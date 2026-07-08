@@ -54,9 +54,8 @@ func runInit(cmd *cobra.Command, _ []string) error {
 			return nil
 		}
 	} else {
-		if _, hasToken := clientauth.Load(); !hasToken {
-			fmt.Println("Not logged in. Run `repoguides login` to connect to the backend, or re-run with --offline to initialize in offline mode.")
-			return nil
+		if err := ensureActiveLogin(); err != nil {
+			return err
 		}
 	}
 

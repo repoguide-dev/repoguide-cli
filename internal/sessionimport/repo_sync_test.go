@@ -105,6 +105,28 @@ func TestCloudClientDeleteRepo(t *testing.T) {
 	}
 }
 
+func TestCloudClientGetMeReturnsUnauthorizedError(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/api/auth/me" {
+			http.NotFound(w, r)
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusUnauthorized)
+		_, _ = w.Write([]byte(`{"error":"invalid token"}`))
+	}))
+	defer server.Close()
+
+	client := CloudClient{BaseURL: server.URL, Token: "stale-token"}
+	_, err := client.GetMe()
+	if err == nil {
+		t.Fatal("GetMe returned nil error")
+	}
+	if !strings.Contains(err.Error(), "invalid token") {
+		t.Fatalf("error = %q, want invalid token message", err)
+	}
+}
+
 func TestCloudClientSkipsWithoutToken(t *testing.T) {
 	client := CloudClient{}
 	if err := client.RegisterRepo("repo_123", "/tmp/project"); err != nil {

@@ -41,11 +41,8 @@ func runSetup(cmd *cobra.Command, _ []string) error {
 	offlineMode, _ := cmd.Flags().GetBool("offline")
 
 	if !offlineMode {
-		if _, ok := clientauth.Load(); !ok {
-			fmt.Println("No active session. Starting login...")
-			if err := deviceLogin("login"); err != nil {
-				return err
-			}
+		if err := ensureActiveLogin(); err != nil {
+			return err
 		}
 	}
 

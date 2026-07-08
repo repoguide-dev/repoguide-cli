@@ -736,6 +736,9 @@ func (c CloudClient) GetMe() (*MeResponse, error) {
 		return nil, err
 	}
 	defer resp.Body.Close()
+	if resp.StatusCode >= 300 {
+		return nil, backendRequestError("backend auth check failed", resp)
+	}
 	var out MeResponse
 	if err := json.NewDecoder(resp.Body).Decode(&out); err != nil {
 		return nil, err

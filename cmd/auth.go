@@ -129,7 +129,7 @@ var logoutCmd = &cobra.Command{
 }
 
 func deviceFlow(mode string) error {
-	if err := deviceLogin(mode); err != nil {
+	if err := runDeviceLogin(mode); err != nil {
 		return err
 	}
 	model := newSessionsModel("", sessionsModelOptions{repoFilter: detectCwdGitRoot()})
@@ -191,6 +191,47 @@ func deviceLogin(mode string) error {
 			return nil
 		}
 	}
+}
+
+var runDeviceLogin = deviceLogin
+
+func ensureActiveLogin() error {
+	baseURL, err := validatedBackendURL()
+	if err != nil {
+		return err
+	}
+
+	token, ok := clientauth.Load()
+	if !ok || strings.TrimSpace(token.Token) == "" {
+		fmt.Println("No active session. Starting login...")
+		return runDeviceLogin("login")
+	}
+
+	client := sessionimport.CloudClient{BaseURL: baseURL, Token: token.Token}
+	if _, err := client.GetMe(); err != nil {
+		if !loginRequiredError(err) {
+			return err
+		}
+		clientauth.Delete()
+		fmt.Println("Saved session is invalid. Starting login...")
+		return runDeviceLogin("login")
+	}
+
+	if updated, changed := refreshedAuthToken(baseURL, token); changed {
+		_ = clientauth.Save(updated)
+	}
+	return nil
+}
+
+func loginRequiredError(err error) bool {
+	if err == nil {
+		return false
+	}
+	msg := strings.ToLower(err.Error())
+	return strings.Contains(msg, "invalid token") ||
+		strings.Contains(msg, "unauthorized") ||
+		strings.Contains(msg, "(401") ||
+		strings.Contains(msg, " 401")
 }
 
 type tokenResp struct {
