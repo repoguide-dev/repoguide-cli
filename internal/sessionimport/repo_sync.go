@@ -122,7 +122,7 @@ func validateBackendRequestPath(path string) error {
 
 func isAllowedBackendRequestPath(path string) bool {
 	switch path {
-	case "/version", "/api/limits", "/api/auth/me", "/api/repos":
+	case "/version", "/api/limits", "/api/auth/me", "/api/auth/refresh", "/api/repos":
 		return true
 	}
 	if !strings.HasPrefix(path, "/api/repos/") {
@@ -705,6 +705,9 @@ func (c CloudClient) GetLimits() (*LimitsResponse, error) {
 // MeResponse is the response from GET /api/auth/me.
 type MeResponse = contracts.MeResponse
 
+// AuthSessionResponse is returned by auth endpoints that mint a bearer token.
+type AuthSessionResponse = contracts.AuthSessionResponse
+
 func (c CloudClient) DeleteMe() error {
 	req, err := c.newRequest(http.MethodDelete, "/api/auth/me", nil)
 	if err != nil {
@@ -740,6 +743,30 @@ func (c CloudClient) GetMe() (*MeResponse, error) {
 		return nil, backendRequestError("backend auth check failed", resp)
 	}
 	var out MeResponse
+	if err := json.NewDecoder(resp.Body).Decode(&out); err != nil {
+		return nil, err
+	}
+	return &out, nil
+}
+
+func (c CloudClient) RefreshAuthToken() (*AuthSessionResponse, error) {
+	if strings.TrimSpace(c.Token) == "" || strings.TrimSpace(c.BaseURL) == "" {
+		return nil, fmt.Errorf("not authenticated")
+	}
+	req, err := c.newRequest(http.MethodPost, "/api/auth/refresh", nil)
+	if err != nil {
+		return nil, err
+	}
+	req.Header.Set("Authorization", "Bearer "+c.Token)
+	resp, err := c.httpClient().Do(req)
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode >= 300 {
+		return nil, backendRequestError("backend token refresh failed", resp)
+	}
+	var out AuthSessionResponse
 	if err := json.NewDecoder(resp.Body).Decode(&out); err != nil {
 		return nil, err
 	}

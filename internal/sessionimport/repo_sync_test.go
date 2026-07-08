@@ -127,6 +127,35 @@ func TestCloudClientGetMeReturnsUnauthorizedError(t *testing.T) {
 	}
 }
 
+func TestCloudClientRefreshAuthToken(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPost {
+			t.Fatalf("method = %s, want POST", r.Method)
+		}
+		if r.URL.Path != "/api/auth/refresh" {
+			t.Fatalf("path = %s, want /api/auth/refresh", r.URL.Path)
+		}
+		if auth := r.Header.Get("Authorization"); auth != "Bearer stale-token" {
+			t.Fatalf("Authorization = %q", auth)
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(AuthSessionResponse{
+			Token: "fresh-token",
+			Email: "dev@repoguide.test",
+		})
+	}))
+	defer server.Close()
+
+	client := CloudClient{BaseURL: server.URL, Token: "stale-token"}
+	resp, err := client.RefreshAuthToken()
+	if err != nil {
+		t.Fatalf("RefreshAuthToken returned error: %v", err)
+	}
+	if resp.Token != "fresh-token" || resp.Email != "dev@repoguide.test" {
+		t.Fatalf("unexpected refresh response: %#v", resp)
+	}
+}
+
 func TestCloudClientSkipsWithoutToken(t *testing.T) {
 	client := CloudClient{}
 	if err := client.RegisterRepo("repo_123", "/tmp/project"); err != nil {

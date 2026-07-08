@@ -8,6 +8,7 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/repoguide/repoguide-cli/internal"
 	clientauth "github.com/repoguide/repoguide-cli/internal/auth"
@@ -23,6 +24,8 @@ import (
 
 // ponytail: overridden via -ldflags in run-local.sh for local dev
 var defaultBackendURL = "https://repoguide.dev"
+
+const tokenRefreshLeadTime = 7 * 24 * time.Hour
 
 var root = &cobra.Command{
 	Use:     "repoguide",
@@ -122,12 +125,22 @@ func refreshCachedAuthProfile() {
 }
 
 func refreshedAuthToken(baseURL string, token clientauth.Token) (clientauth.Token, bool) {
-	client := sessionimport.CloudClient{BaseURL: baseURL, Token: token.Token}
+	updated := token
+	client := sessionimport.CloudClient{BaseURL: baseURL, Token: updated.Token}
+	if clientauth.ExpiresSoon(updated.Token, tokenRefreshLeadTime) {
+		refreshed, err := client.RefreshAuthToken()
+		if err == nil && strings.TrimSpace(refreshed.Token) != "" {
+			updated.Token = refreshed.Token
+			if email := strings.TrimSpace(refreshed.Email); email != "" {
+				updated.Email = email
+			}
+			client.Token = updated.Token
+		}
+	}
 	me, err := client.GetMe()
 	if err != nil {
-		return token, false
+		return updated, updated != token
 	}
-	updated := token
 	if email := strings.TrimSpace(me.Email); email != "" {
 		updated.Email = email
 	}

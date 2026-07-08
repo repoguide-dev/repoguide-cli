@@ -1,9 +1,12 @@
 package auth
 
 import (
+	"encoding/base64"
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"strings"
+	"time"
 )
 
 type Token struct {
@@ -43,4 +46,30 @@ func Save(t Token) error {
 
 func Delete() {
 	os.Remove(tokenPath())
+}
+
+func ExpiresAt(token string) (time.Time, bool) {
+	parts := strings.Split(token, ".")
+	if len(parts) != 3 || strings.TrimSpace(parts[1]) == "" {
+		return time.Time{}, false
+	}
+	payload, err := base64.RawURLEncoding.DecodeString(parts[1])
+	if err != nil {
+		return time.Time{}, false
+	}
+	var claims struct {
+		Exp int64 `json:"exp"`
+	}
+	if err := json.Unmarshal(payload, &claims); err != nil || claims.Exp <= 0 {
+		return time.Time{}, false
+	}
+	return time.Unix(claims.Exp, 0), true
+}
+
+func ExpiresSoon(token string, within time.Duration) bool {
+	expiresAt, ok := ExpiresAt(token)
+	if !ok {
+		return false
+	}
+	return time.Until(expiresAt) <= within
 }
