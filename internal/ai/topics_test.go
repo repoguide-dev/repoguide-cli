@@ -8,6 +8,73 @@ import (
 	"github.com/repoguide/repoguide-core/contracts/v1"
 )
 
+func TestBuildCandidatesSplitsBroadSubsystemIntoFeatureCandidates(t *testing.T) {
+	bundle := contracts.RepoAnalysisBundle{
+		Subsystems: []contracts.RepoAnalysisSubsystem{{
+			Name:        "web/src",
+			Sessions:    9,
+			Reads:       24,
+			Edits:       18,
+			SourceReads: 24,
+			SourceEdits: 18,
+			TopFiles: []string{
+				"web/src/cart/CartPage.tsx",
+				"web/src/checkout/CheckoutPage.tsx",
+				"web/src/products/ProductList.tsx",
+			},
+			Paths: []string{
+				"web/src/cart/CartPage.tsx",
+				"web/src/cart/cartStore.ts",
+				"web/src/cart/CartPage.test.tsx",
+				"web/src/checkout/CheckoutPage.tsx",
+				"web/src/checkout/discountCodes.ts",
+				"web/src/products/ProductList.tsx",
+				"web/src/products/ProductDetail.tsx",
+			},
+			RelatedSessions: []contracts.RepoAnalysisSessionRef{
+				{ID: "s1", Timestamp: "2026-07-09T12:00:00Z"},
+				{ID: "s2", Timestamp: "2026-07-09T11:00:00Z"},
+				{ID: "s3", Timestamp: "2026-07-09T10:00:00Z"},
+				{ID: "s4", Timestamp: "2026-07-09T09:00:00Z"},
+				{ID: "s5", Timestamp: "2026-07-09T08:00:00Z"},
+			},
+		}},
+		Sessions: []contracts.RepoAnalysisSession{
+			{ID: "s1", Prompts: []string{"Add cart page with line items and subtotal"}},
+			{ID: "s2", Prompts: []string{"Add quantity and remove controls for cart items"}},
+			{ID: "s3", Prompts: []string{"Add checkout page with form validation"}},
+			{ID: "s4", Prompts: []string{"Add discount code validation and application at checkout"}},
+			{ID: "s5", Prompts: []string{"Add product detail page to storefront"}},
+		},
+		Files: []contracts.RepoAnalysisFile{
+			{Path: "web/src/cart/CartPage.tsx", Kind: "source"},
+			{Path: "web/src/cart/cartStore.ts", Kind: "source"},
+			{Path: "web/src/cart/CartPage.test.tsx", Kind: "test"},
+			{Path: "web/src/checkout/CheckoutPage.tsx", Kind: "source"},
+			{Path: "web/src/checkout/discountCodes.ts", Kind: "source"},
+			{Path: "web/src/products/ProductList.tsx", Kind: "source"},
+			{Path: "web/src/products/ProductDetail.tsx", Kind: "source"},
+		},
+	}
+
+	candidates := buildCandidates(bundle)
+	if len(candidates) < 2 {
+		t.Fatalf("candidate count = %d, want at least 2", len(candidates))
+	}
+
+	names := make([]string, 0, len(candidates))
+	for _, candidate := range candidates {
+		names = append(names, candidate.subsystem.Name)
+	}
+	joined := strings.Join(names, " | ")
+	if !strings.Contains(joined, "[cart]") {
+		t.Fatalf("expected cart split in %q", joined)
+	}
+	if !strings.Contains(joined, "[checkout]") {
+		t.Fatalf("expected checkout split in %q", joined)
+	}
+}
+
 func TestParseTopicResultsRecoversPartialArray(t *testing.T) {
 	raw := `[{"name":"CLI Auth Flow","summary":"s","confidence":0.9,"when_to_use":["a"],"prompt_keywords":["auth"]},`
 

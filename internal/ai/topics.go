@@ -8,6 +8,7 @@ import (
 	"os"
 	"path/filepath"
 	"sort"
+	"strconv"
 	"strings"
 
 	"github.com/repoguide/repoguide-cli/internal/ai/prompts"
@@ -428,7 +429,326 @@ func buildCandidates(bundle contracts.RepoAnalysisBundle) []topicCandidate {
 			testTouchSignal:     deriveTestSignal(sub),
 		})
 	}
-	return candidates
+	return expandFeatureCandidates(candidates)
+}
+
+type featureSplit struct {
+	token      string
+	promptHits int
+	files      []string
+}
+
+var topicSplitStopwords = map[string]struct{}{
+	"add": {}, "admin": {}, "agent": {}, "api": {}, "app": {}, "backend": {}, "build": {},
+	"claude": {}, "clear": {}, "code": {}, "codex": {}, "component": {}, "create": {}, "detail": {}, "display": {},
+	"edit": {}, "endpoint": {}, "feature": {}, "file": {}, "fix": {}, "flow": {}, "frontend": {}, "get": {},
+	"helper": {}, "http": {}, "list": {}, "localstorage": {}, "management": {},
+	"page": {}, "path": {}, "persistence": {}, "post": {}, "price": {}, "prices": {},
+	"react": {}, "rendering": {}, "root": {}, "server": {}, "service": {}, "setup": {}, "shared": {}, "show": {},
+	"sqlite": {}, "storefront": {}, "success": {}, "successful": {}, "table": {}, "targets": {},
+	"test": {}, "tests": {}, "types": {}, "unit": {}, "update": {}, "validation": {}, "vite": {}, "with": {},
+	"worker": {}, "write": {},
+}
+
+func expandFeatureCandidates(candidates []topicCandidate) []topicCandidate {
+	expanded := make([]topicCandidate, 0, len(candidates))
+	for _, candidate := range candidates {
+		splits := featureSplits(candidate)
+		if len(splits) < 2 {
+			expanded = append(expanded, candidate)
+			continue
+		}
+		for _, split := range splits {
+			expanded = append(expanded, candidateForSplit(candidate, split))
+		}
+	}
+	return expanded
+}
+
+func featureSplits(candidate topicCandidate) []featureSplit {
+	if len(candidate.prompts) < 3 || len(candidate.subsystem.Paths) < 3 {
+		return nil
+	}
+
+	pathTokens := make(map[string]map[string]struct{}, len(candidate.subsystem.Paths))
+	for _, path := range candidate.subsystem.Paths {
+		pathTokens[path] = pathTokenSet(path)
+	}
+
+	promptHits := map[string]int{}
+	for _, prompt := range candidate.prompts {
+		seen := map[string]struct{}{}
+		for _, token := range focusTokens(prompt) {
+			if _, ok := seen[token]; ok {
+				continue
+			}
+			seen[token] = struct{}{}
+			promptHits[token]++
+		}
+	}
+
+	type scoredSplit struct {
+		featureSplit
+		score int
+	}
+	var scored []scoredSplit
+	for token, hits := range promptHits {
+		if hits < 2 {
+			continue
+		}
+		files := matchingPathsForToken(token, pathTokens)
+		if len(files) < 2 {
+			continue
+		}
+		scored = append(scored, scoredSplit{
+			featureSplit: featureSplit{token: token, promptHits: hits, files: files},
+			score:        hits*10 + len(files),
+		})
+	}
+	sort.Slice(scored, func(i, j int) bool {
+		if scored[i].score != scored[j].score {
+			return scored[i].score > scored[j].score
+		}
+		return scored[i].token < scored[j].token
+	})
+
+	selected := make([]featureSplit, 0, 4)
+	for _, split := range scored {
+		overlaps := false
+		for _, existing := range selected {
+			if fileOverlapRatio(existing.files, split.files) >= 0.8 {
+				overlaps = true
+				break
+			}
+		}
+		if overlaps {
+			continue
+		}
+		selected = append(selected, split.featureSplit)
+		if len(selected) >= 4 {
+			break
+		}
+	}
+	return selected
+}
+
+func candidateForSplit(base topicCandidate, split featureSplit) topicCandidate {
+	matched := make(map[string]struct{}, len(split.files))
+	for _, path := range split.files {
+		matched[path] = struct{}{}
+	}
+
+	filteredTopFiles := filterPaths(base.subsystem.TopFiles, matched)
+	if len(filteredTopFiles) == 0 {
+		filteredTopFiles = append(filteredTopFiles, split.files...)
+		if len(filteredTopFiles) > 5 {
+			filteredTopFiles = filteredTopFiles[:5]
+		}
+	}
+	filteredReads := filterPaths(base.topReadFiles, matched)
+	filteredTests := filterTokenPaths(base.tests, split.token)
+	filteredPrompts := filterPrompts(base.prompts, split.token)
+	filteredHints := filterHints(base.readBeforeEditHints, split)
+	filteredLabels := filterFileLabels(base.fileClassifications, matched)
+
+	sub := base.subsystem
+	sub.Name = fmt.Sprintf("%s [%s]", base.subsystem.Name, split.token)
+	sub.Paths = append([]string(nil), split.files...)
+	sub.TopFiles = filteredTopFiles
+	sub.Sessions = minInt(base.subsystem.Sessions, maxInt(split.promptHits, 1))
+	scale := 1.0
+	if len(base.subsystem.Paths) > 0 {
+		scale = float64(len(split.files)) / float64(len(base.subsystem.Paths))
+	}
+	sub.Reads = scaleCount(base.subsystem.Reads, scale)
+	sub.Edits = scaleCount(base.subsystem.Edits, scale)
+	sub.SourceReads = scaleCount(base.subsystem.SourceReads, scale)
+	sub.SourceEdits = scaleCount(base.subsystem.SourceEdits, scale)
+	sub.TestReads = scaleCount(base.subsystem.TestReads, scale)
+	sub.TestEdits = scaleCount(base.subsystem.TestEdits, scale)
+	sub.SourceEditSessions = minInt(sub.Sessions, maxInt(scaleCount(base.subsystem.SourceEditSessions, scale), 1))
+	sub.TestTouchedSessions = minInt(sub.Sessions, scaleCount(base.subsystem.TestTouchedSessions, scale))
+	sub.ContextTokens = int64(scale * float64(base.subsystem.ContextTokens))
+	sub.CostUSD = scale * base.subsystem.CostUSD
+
+	return topicCandidate{
+		subsystem:           sub,
+		prompts:             filteredPrompts,
+		commands:            base.commands,
+		lastActive:          base.lastActive,
+		tests:               filteredTests,
+		topReadFiles:        filteredReads,
+		seenWith:            base.seenWith,
+		readFiles:           scaleCount(base.readFiles, scale),
+		fileClassifications: filteredLabels,
+		readBeforeEditHints: filteredHints,
+		testTouchSignal:     base.testTouchSignal,
+	}
+}
+
+func focusTokens(text string) []string {
+	parts := strings.FieldsFunc(strings.ToLower(text), func(r rune) bool {
+		return (r < 'a' || r > 'z') && (r < '0' || r > '9')
+	})
+	out := make([]string, 0, len(parts))
+	for _, part := range parts {
+		token := normalizeFocusToken(part)
+		if token == "" {
+			continue
+		}
+		if _, skip := topicSplitStopwords[token]; skip {
+			continue
+		}
+		out = append(out, token)
+	}
+	return out
+}
+
+func normalizeFocusToken(token string) string {
+	token = strings.TrimSpace(strings.ToLower(token))
+	if len(token) < 4 {
+		return ""
+	}
+	if _, err := strconv.Atoi(token); err == nil {
+		return ""
+	}
+	if strings.HasSuffix(token, "ies") && len(token) > 4 {
+		token = strings.TrimSuffix(token, "ies") + "y"
+	} else if strings.HasSuffix(token, "s") && len(token) > 4 {
+		token = strings.TrimSuffix(token, "s")
+	}
+	return token
+}
+
+func pathTokenSet(path string) map[string]struct{} {
+	set := map[string]struct{}{}
+	for _, token := range focusTokens(path) {
+		set[token] = struct{}{}
+	}
+	return set
+}
+
+func matchingPathsForToken(token string, pathTokens map[string]map[string]struct{}) []string {
+	out := make([]string, 0)
+	for path, tokens := range pathTokens {
+		if _, ok := tokens[token]; ok {
+			out = append(out, path)
+		}
+	}
+	sort.Strings(out)
+	return out
+}
+
+func fileOverlapRatio(left, right []string) float64 {
+	if len(left) == 0 || len(right) == 0 {
+		return 0
+	}
+	set := make(map[string]struct{}, len(left))
+	for _, path := range left {
+		set[path] = struct{}{}
+	}
+	shared := 0
+	for _, path := range right {
+		if _, ok := set[path]; ok {
+			shared++
+		}
+	}
+	return float64(shared) / float64(minInt(len(left), len(right)))
+}
+
+func filterPaths(paths []string, allowed map[string]struct{}) []string {
+	out := make([]string, 0, len(paths))
+	for _, path := range paths {
+		if _, ok := allowed[path]; ok {
+			out = append(out, path)
+		}
+	}
+	return dedupeStrings(out)
+}
+
+func filterTokenPaths(paths []string, token string) []string {
+	out := make([]string, 0, len(paths))
+	for _, path := range paths {
+		if _, ok := pathTokenSet(path)[token]; ok {
+			out = append(out, path)
+		}
+	}
+	return dedupeStrings(out)
+}
+
+func filterPrompts(prompts []string, token string) []string {
+	out := make([]string, 0, len(prompts))
+	for _, prompt := range prompts {
+		for _, promptToken := range focusTokens(prompt) {
+			if promptToken == token {
+				out = append(out, prompt)
+				break
+			}
+		}
+	}
+	if len(out) == 0 {
+		return prompts
+	}
+	return dedupeStrings(out)
+}
+
+func filterHints(hints []string, split featureSplit) []string {
+	matched := make([]string, 0, len(hints))
+	for _, hint := range hints {
+		lower := strings.ToLower(hint)
+		if strings.Contains(lower, split.token) {
+			matched = append(matched, hint)
+			continue
+		}
+		for _, path := range split.files {
+			if strings.Contains(hint, path) {
+				matched = append(matched, hint)
+				break
+			}
+		}
+	}
+	return dedupeStrings(matched)
+}
+
+func filterFileLabels(labels map[string][]string, allowed map[string]struct{}) map[string][]string {
+	if len(labels) == 0 {
+		return nil
+	}
+	out := make(map[string][]string)
+	for path, value := range labels {
+		if _, ok := allowed[path]; ok {
+			out[path] = value
+		}
+	}
+	if len(out) == 0 {
+		return nil
+	}
+	return out
+}
+
+func scaleCount(count int, scale float64) int {
+	if count == 0 || scale <= 0 {
+		return 0
+	}
+	scaled := int(scale * float64(count))
+	if scaled == 0 {
+		return 1
+	}
+	return scaled
+}
+
+func minInt(a, b int) int {
+	if a < b {
+		return a
+	}
+	return b
+}
+
+func maxInt(a, b int) int {
+	if a > b {
+		return a
+	}
+	return b
 }
 
 // aggregateCommands merges observed commands across a subsystem's related
