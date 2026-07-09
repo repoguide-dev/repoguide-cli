@@ -56,8 +56,8 @@ const SharedFieldRules = `- name: 3-6 words, Title Case, e.g. "MCP context routi
 - tests.signal: use the pre-computed test_touch_signal value unless you have strong evidence to override it.
 - tests.notes: concrete, e.g. "Check response-shape tests before changing JSON fields." Leave empty if nothing specific.
 - tests.commands: only commands copied verbatim from the commands input that run tests or validate changes, at most 3. Empty array if no such command was observed. Never invent commands.
-- known_workflows: actionable steps, one per distinct recurring pattern - do not restate the same workflow twice. Derive from read_before_edit_hints, observed commands, prompt patterns (especially follow-up corrections), file co-edit signals. Format: verb phrase.
-- avoid_wasting_time: concrete warnings, one per distinct pitfall - do not restate the same warning twice. Derive from commands with failures (name the command and that it failed here), follow-up corrections in prompts, context_tax file labels (do not start by reading these), search friction patterns, irrelevant seen_with files. Be specific - name files, commands, or file types when possible.
+- known_workflows: retrieval hints only, one per distinct recurring pattern - do not restate the same hint twice. Prefer stable repo-specific facts such as correct file pairings, mirrored paths, package boundaries, canonical entry points, and distinctive terms agents should recognize. Derive from read_before_edit_hints, observed commands, prompt patterns (especially follow-up corrections), and file co-edit signals. Do not give implementation advice, sequencing advice, or generic engineering process tips. Format: short factual phrase or sentence fragment.
+- avoid_wasting_time: concrete evidence-backed pitfalls, one per distinct pitfall - do not restate the same warning twice. Derive from commands with failures (name the command and that it failed here), follow-up corrections in prompts, context_tax file labels, search friction patterns, stale paths, and irrelevant seen_with files. Be specific - name files, commands, terms, or file types when possible. Do not include broad coaching such as how to edit, test, validate, mirror changes, or structure an implementation unless the pitfall is explicitly evidenced in the input.
 - risk_flags: apply any that fit from this enum:
   schema_sensitive (response/API/type shape often changes)
   low_test_signal (source changes often happen without tests)
@@ -93,8 +93,8 @@ Input fields per group:
 - directory_hint: primary directory edited in these sessions
 - session_count: how many sessions touched this group
 - last_active: date of the most recent session in this group - older groups are more likely to contain stale file paths
-- prompts: actual user messages, most recent sessions first - primary signal for naming and known_workflows. Later prompts within a session are often corrections of what the agent got wrong; treat corrections as strong evidence for known_workflows and avoid_wasting_time.
-- commands: shell commands agents actually ran in these sessions, with run and failure counts. Repeated successful commands are validation-workflow evidence; commands with failures are avoid_wasting_time evidence.
+- prompts: actual user messages, most recent sessions first - primary signal for naming and retrieval hints. Later prompts within a session are often corrections of what the agent got wrong; treat corrections as strong evidence for file routing, terminology, boundaries, and avoid_wasting_time.
+- commands: shell commands agents actually ran in these sessions, with run and failure counts. Repeated successful commands are weak evidence unless they reveal a specific canonical entry point or validation command; commands with failures are stronger avoid_wasting_time evidence.
 - top_edited_files: files most frequently written
 - top_read_files: files most frequently read (often reference/schema files)
 - test_files: test files associated with this directory
@@ -120,6 +120,12 @@ Important rules:
 - seen_with entries are candidates for cross_cutting_files: include them if relevant, skip if incidental.
 - If you are unsure, omit the topic instead of inventing a generic one.
 - Ignore repeated command-like strings, corrupted prompt fragments, obvious tool noise, and low-signal identifiers unless reinforced by file evidence.
+- Treat this as retrieval, not coaching. The goal is to help an agent orient quickly with repository-specific experience, not to tell it how to implement the task.
+- Prefer repo-specific nouns over advice: file paths, package names, mirrored modules, APIs, commands that actually failed, and distinctive terms from prompts are higher value than general instructions.
+- Only include guidance that is clearly supported by repeated evidence in prompts, commands, or file patterns. If a statement would still sound plausible in many unrelated repositories, it is probably too generic - omit it.
+- Do not output generic process advice such as "start with", "before editing", "run tests from", "update X first", "manually mirror changes", or "use git diff" unless that exact constraint is evidenced by the input as a recurring repo-specific pitfall.
+- For known_workflows and avoid_wasting_time, prioritize unique corrections from prior sessions: wrong file family, stale path, wrong package, wrong term, wrong command, or missing cross-cutting file.
+- It is better to return fewer, sharper hints than a padded topic full of plausible-sounding advice.
 - Create topics per domain area: each topic should map to one recurring business/domain concept, feature area, workflow, integration, or service boundary that an agent would intentionally choose.
 - Topic names must describe a recurring kind of work, not a folder name.
 - Prefer area-focused topics over layer buckets: name the concrete feature, workflow, page, service, or integration, not "frontend", "backend", "UI", or the whole app area.
