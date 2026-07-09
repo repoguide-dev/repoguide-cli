@@ -33,7 +33,7 @@ func saveHintVersion(v int) error {
 	return os.WriteFile(path, []byte(fmt.Sprintf("%d\n", v)), 0o644)
 }
 
-// MaybeUpdateHints re-injects the MCP instruction block into all activated repos
+// MaybeUpdateHints re-injects the MCP instruction block into all hinted repos
 // when hintVersion has advanced past the last-written version in ~/.repoguide/hints_version.
 func MaybeUpdateHints() {
 	if loadHintVersion() >= hintVersion {
@@ -43,7 +43,7 @@ func MaybeUpdateHints() {
 	if err != nil {
 		return
 	}
-	for _, repoPath := range cfg.ActivatedRepos {
+	for _, repoPath := range cfg.HintedRepos {
 		_, _ = InstructRepo(repoPath)
 		if _, err := os.Stat(filepath.Join(repoPath, "CLAUDE.md")); err == nil {
 			_, _ = InstructRepoForClaude(repoPath)
@@ -123,6 +123,7 @@ If RepoGuide is unavailable, proceed without it:
 
 type MCPConfig struct {
 	ActivatedRepos []string `json:"activatedRepos"`
+	HintedRepos    []string `json:"hintedRepos,omitempty"`
 }
 
 func mcpConfigPath() string {
@@ -169,23 +170,49 @@ func UnsetRepoActivated(cfg *MCPConfig, repoPath string) {
 	})
 }
 
-func ActivateMCPRepo(repoPath string) (string, error) {
+func IsRepoHinted(cfg MCPConfig, repoPath string) bool {
+	return slices.Contains(cfg.HintedRepos, repoPath)
+}
+
+func SetRepoHinted(cfg *MCPConfig, repoPath string) {
+	if !IsRepoHinted(*cfg, repoPath) {
+		cfg.HintedRepos = append(cfg.HintedRepos, repoPath)
+	}
+}
+
+func UnsetRepoHinted(cfg *MCPConfig, repoPath string) {
+	cfg.HintedRepos = slices.DeleteFunc(cfg.HintedRepos, func(r string) bool {
+		return r == repoPath
+	})
+}
+
+func ActivateMCPRepo(repoPath string) error {
 	repoID, err := gitOutputAt(repoPath, "config", "--get", "repoguide.repoId")
 	if err != nil || repoID == "" {
-		return "", ErrRepoNotInitialized
+		return ErrRepoNotInitialized
 	}
 	storeDir := filepath.Join(RepoGuideDir(), "repos", repoID)
-	filename, err := InstructRepo(repoPath)
-	if err != nil {
+	if _, err := SetManagedCommitHooks(storeDir, repoPath, true); err != nil {
+		return err
+	}
+	cfg, _ := LoadMCPConfig()
+	SetRepoActivated(&cfg, repoPath)
+	_ = SaveMCPConfig(cfg)
+	return nil
+}
+
+func ActivateMCPRepoWithInstructions(repoPath string) (string, error) {
+	if err := ActivateMCPRepo(repoPath); err != nil {
 		return "", err
 	}
-	if _, err := SetManagedCommitHooks(storeDir, repoPath, true); err != nil {
+	filename, err := InstructRepo(repoPath)
+	if err != nil {
 		return "", err
 	}
 	_ = InjectFeedbackInstruction(repoPath)
 	HideInjectedFiles(repoPath)
 	cfg, _ := LoadMCPConfig()
-	SetRepoActivated(&cfg, repoPath)
+	SetRepoHinted(&cfg, repoPath)
 	_ = SaveMCPConfig(cfg)
 	return filename, nil
 }

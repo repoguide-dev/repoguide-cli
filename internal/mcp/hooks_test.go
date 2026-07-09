@@ -56,7 +56,7 @@ func TestRunManagedCommitHookScrubsInjectedMessagesFromIndex(t *testing.T) {
 	}
 }
 
-func TestActivateMCPRepoEnablesManagedCommitHooks(t *testing.T) {
+func TestActivateMCPRepoEnablesManagedCommitHooksWithoutTouchingAgents(t *testing.T) {
 	tempDir := t.TempDir()
 	t.Chdir(tempDir)
 	homeDir := filepath.Join(tempDir, "home")
@@ -78,12 +78,11 @@ func TestActivateMCPRepoEnablesManagedCommitHooks(t *testing.T) {
 	if err != nil {
 		t.Fatalf("InitRepo returned error: %v", err)
 	}
-	filename, err := ActivateMCPRepo(repoRoot)
-	if err != nil {
+	if err := ActivateMCPRepo(repoRoot); err != nil {
 		t.Fatalf("ActivateMCPRepo returned error: %v", err)
 	}
-	if filename != "AGENTS.md" {
-		t.Fatalf("filename = %q, want AGENTS.md", filename)
+	if _, err := os.Stat(filepath.Join(repoRoot, "AGENTS.md")); !os.IsNotExist(err) {
+		t.Fatalf("AGENTS.md should not be created by ActivateMCPRepo, got err=%v", err)
 	}
 	cfg, err := LoadRepoConfigFile(result.StoreDir)
 	if err != nil {
@@ -100,5 +99,53 @@ func TestActivateMCPRepoEnablesManagedCommitHooks(t *testing.T) {
 		if !hookFileContainsManagedBlock(path) {
 			t.Fatalf("expected managed hook block in %s after MCP activation", name)
 		}
+	}
+	mcpCfg, err := LoadMCPConfig()
+	if err != nil {
+		t.Fatalf("LoadMCPConfig: %v", err)
+	}
+	if !IsRepoActivated(mcpCfg, repoRoot) {
+		t.Fatalf("repo should be activated after MCP activation")
+	}
+	if IsRepoHinted(mcpCfg, repoRoot) {
+		t.Fatalf("repo should not be marked hinted by ActivateMCPRepo")
+	}
+}
+
+func TestActivateMCPRepoWithInstructionsMarksRepoHinted(t *testing.T) {
+	tempDir := t.TempDir()
+	t.Chdir(tempDir)
+	homeDir := filepath.Join(tempDir, "home")
+	if err := os.MkdirAll(homeDir, 0o755); err != nil {
+		t.Fatalf("MkdirAll(home): %v", err)
+	}
+	t.Setenv("HOME", homeDir)
+
+	repoRoot := filepath.Join(tempDir, "repo")
+	if err := os.MkdirAll(repoRoot, 0o755); err != nil {
+		t.Fatalf("MkdirAll(repo): %v", err)
+	}
+	runGit(t, repoRoot, "init")
+	runGit(t, repoRoot, "config", "user.email", "test@example.com")
+	runGit(t, repoRoot, "config", "user.name", "Test User")
+	t.Chdir(repoRoot)
+
+	if _, err := InitRepo(InitOptions{}); err != nil {
+		t.Fatalf("InitRepo returned error: %v", err)
+	}
+
+	filename, err := ActivateMCPRepoWithInstructions(repoRoot)
+	if err != nil {
+		t.Fatalf("ActivateMCPRepoWithInstructions returned error: %v", err)
+	}
+	if filename != "AGENTS.md" {
+		t.Fatalf("filename = %q, want AGENTS.md", filename)
+	}
+	mcpCfg, err := LoadMCPConfig()
+	if err != nil {
+		t.Fatalf("LoadMCPConfig: %v", err)
+	}
+	if !IsRepoHinted(mcpCfg, repoRoot) {
+		t.Fatalf("repo should be marked hinted after ActivateMCPRepoWithInstructions")
 	}
 }

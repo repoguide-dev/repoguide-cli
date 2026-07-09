@@ -88,6 +88,7 @@ func runRemove(cmd *cobra.Command, _ []string) error {
 
 	mcpCfg, _ := mcpinternal.LoadMCPConfig()
 	mcpinternal.UnsetRepoActivated(&mcpCfg, result.RepoRoot)
+	mcpinternal.UnsetRepoHinted(&mcpCfg, result.RepoRoot)
 	_ = mcpinternal.SaveMCPConfig(mcpCfg)
 
 	if name, _ := mcpinternal.RemoveAllInstructions(result.RepoRoot); name != "" {

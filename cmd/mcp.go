@@ -197,12 +197,11 @@ func runMCPFix(_ *cobra.Command, _ []string) error {
 
 	// Re-activate the current repo (re-installs hooks + instructions).
 	if repoRoot, err := internal.CurrentRepoRoot(); err == nil {
-		if _, err := mcpinternal.ActivateMCPRepo(repoRoot); err != nil {
+		if err := mcpinternal.ActivateMCPRepo(repoRoot); err != nil {
 			fmt.Printf("  ✗ %s: %v\n", filepath.Base(repoRoot), err)
 		} else {
 			_, _ = mcpinternal.InstructRepoForClaude(repoRoot)
-			internal.HideInjectedFiles(repoRoot)
-			fmt.Printf("  ✓ %s hooks + instructions applied\n", filepath.Base(repoRoot))
+			fmt.Printf("  ✓ %s hooks applied\n", filepath.Base(repoRoot))
 		}
 	}
 
@@ -598,7 +597,7 @@ func runMCPUninstall(_ *cobra.Command, _ []string) error {
 }
 
 func instructAndActivate(repoPath string) error {
-	filename, err := mcpinternal.ActivateMCPRepo(repoPath)
+	filename, err := mcpinternal.ActivateMCPRepoWithInstructions(repoPath)
 	if err != nil {
 		return err
 	}
@@ -617,7 +616,7 @@ const (
 	mcpInstallLoading mcpInstallView = iota
 	mcpInstallSelect
 	mcpInstallConfirm
-	mcpInstallApplying     // applying AGENTS.md
+	mcpInstallApplying     // enabling MCP for selected repos
 	mcpInstallClientSelect // choose which MCP clients to install
 	mcpInstallClients      // installing selected MCP clients
 	mcpInstallPermission   // ask to allow repoguide_get_repo_experience in Claude Code
@@ -929,7 +928,10 @@ func (m mcpInstallModel) updateConfirm(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 					if initErr != nil {
 						err = initErr
 					} else {
-						filename, err = mcpinternal.ActivateMCPRepo(repoPath)
+						err = mcpinternal.ActivateMCPRepo(repoPath)
+						if err == nil {
+							filename = "MCP enabled"
+						}
 					}
 					results = append(results, mcpInstallResult{path: repoPath, filename: filename, err: err})
 				}
@@ -948,7 +950,7 @@ func (m mcpInstallModel) View() string {
 		)
 	case mcpInstallApplying:
 		return lipgloss.NewStyle().Padding(1, 2).Render(
-			titleStyle.Render("RepoGuide MCP install") + "\n\n" + m.spinner.View() + " Writing agent instructions...",
+			titleStyle.Render("RepoGuide MCP install") + "\n\n" + m.spinner.View() + " Enabling RepoGuide MCP...",
 		)
 	case mcpInstallClients:
 		return lipgloss.NewStyle().Padding(1, 2).Render(
@@ -1001,9 +1003,6 @@ func (m mcpInstallModel) viewPermission() string {
 }
 
 func (m *mcpInstallModel) enableFeedback() {
-	for _, repoPath := range m.confirmed {
-		_ = mcpinternal.InjectFeedbackInstruction(repoPath)
-	}
 	if m.claudeInstalled() {
 		_ = mcpinternal.AddClaudeCodeFeedbackPermission()
 	}
@@ -1078,9 +1077,9 @@ func (m mcpInstallModel) viewConfirm() string {
 	lines := []string{
 		titleStyle.Render("RepoGuide MCP install") + "  " + muted.Render(progress),
 		"",
-		fmt.Sprintf("Add MCP instruction to %s?", headStyle.Render(name)),
+		fmt.Sprintf("Enable RepoGuide MCP for %s?", headStyle.Render(name)),
 		muted.Render(renderRepoPath(repoPath)),
-		muted.Render("Skip this and RepoGuide still works via MCP alone; this just adds an in-repo hint."),
+		muted.Render("This installs RepoGuide MCP and hooks without editing in-repo agent docs."),
 		"",
 		yesLine,
 		noLine,
@@ -1155,11 +1154,11 @@ func runMCPInstallApprove(noHooks bool) error {
 			fmt.Printf("  ✗ %s: %s\n", filepath.Base(repoPath), err)
 			continue
 		}
-		filename, err := mcpinternal.ActivateMCPRepo(repoPath)
+		err := mcpinternal.ActivateMCPRepo(repoPath)
 		if err != nil {
 			fmt.Printf("  ✗ %s: %s\n", filepath.Base(repoPath), err)
 		} else {
-			fmt.Printf("  ✓ %s - %s\n", filepath.Base(repoPath), filename)
+			fmt.Printf("  ✓ %s - MCP enabled\n", filepath.Base(repoPath))
 		}
 	}
 

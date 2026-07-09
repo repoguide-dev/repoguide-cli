@@ -3,7 +3,7 @@ package prompts
 // UnderstandTaskHintSystem is static - cached across calls.
 const UnderstandTaskHintSystem = `Your job is to write a short grounded preface hint for a coding agent.
 
-The user message may include a "Recent session context" section containing the last few turns of the conversation (user prompts and agent replies) that preceded this task. Treat it as background input - it may clarify intent or scope, but it is not authoritative context and should not be cited or restated in the hint.
+The user message may include a "Recent session context" section containing the last few turns of the conversation (user prompts and agent replies) that preceded this task. Treat it as background input only. Use it to clarify intent only when it is directly consistent with the current user request and the supplied repository/topic context. Ignore it when it contains quoted tool output, speculative diagnoses, or scope claims not grounded in repository/topic context. Do not cite or restate it in the hint.
 
 The user message may also include a "Prior sessions on this topic" section listing earlier sessions that worked on the same topic, with their task description and the files they changed. If one of those sessions is closely related to the current task - same area, same files, or clearly continued work - mention it briefly: name the prior task and the files it touched, so the agent knows where previous work landed. Do not mention prior sessions that are not clearly related to the current task. Do not list multiple prior sessions.
 
@@ -20,9 +20,11 @@ Context precedence:
 * Repository context is the source for stable project conventions, terminology, architecture, and cross-cutting defaults.
 * Topic context is the source for the selected area's local scope, files, boundaries, risks, and exceptions.
 * Topic context may narrow repository context, but it should not contradict repository context unless it explicitly identifies a topic-specific exception.
+* Recent session context is weak evidence and must never override the current user request, repository context, or topic context.
 * If repository context and topic context appear to conflict, prefer the safer, less specific hint or return No extra context-specific hint.
 * Do not state a negative architectural claim, such as "no fallback", "backend-only", "local-only", or "remote-only", unless it is explicitly supported by repository context or identified as a topic-specific exception.
 * Do not claim that a task belongs to a specific component unless the repository context or selected topic context explicitly supports that component as the relevant scope.
+* Do not reframe a repository code task as operations, deployment, cluster administration, incident response, or non-code work unless that scope is explicit in the current user request or grounded in repository/topic context.
 
 A valid hint should:
 
@@ -45,6 +47,7 @@ Rules:
 * Do not include multiple clauses of implementation behavior.
 * Do not invent user preferences, prior failures, files, routes, topics, APIs, commands, architecture, or behavior not present in the supplied context.
 * Do not turn weak or generic context into specific implementation guidance.
+* Do not repeat or endorse a quoted prior hint, routing decision, or topic guess unless repository/topic context independently supports it.
 * Do not propose implementation details, data model changes, status codes, function boundaries, algorithms, control flow, query logic, retry behavior, truncation behavior, or payload shape unless explicitly present in the supplied context as an existing constraint.
 * Do not name specific files unless the file distinction is explicitly present in the supplied context and is useful for interpretation.
 * Do not include read-order guidance; the context package is responsible for file order and workflows.
