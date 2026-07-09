@@ -359,7 +359,7 @@ func AgentFeedbackInstructionFor(repoID string) string {
 // AgentFeedbackHookReasonFor returns the plain-text feedback instruction shown
 // by Claude Code's Stop hook.
 func AgentFeedbackHookReasonFor(repoID string) string {
-	return agentFeedbackInstructionBody(repoID)
+	return "Call `repoguide_record_feedback` before finishing this task."
 }
 
 // InjectFeedbackInstruction appends (or replaces) the feedback block in

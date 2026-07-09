@@ -84,11 +84,15 @@ func TestRunStopHookBlocksOnceAfterToolUse(t *testing.T) {
 	if decision["decision"] != "block" {
 		t.Fatalf("expected decision=block, got %v", decision["decision"])
 	}
-	if !strings.Contains(decision["reason"].(string), "repoguide_record_feedback") {
+	reason := decision["reason"].(string)
+	if !strings.Contains(reason, "repoguide_record_feedback") {
 		t.Fatalf("expected reason to mention repoguide_record_feedback, got %v", decision["reason"])
 	}
-	if strings.Contains(decision["reason"].(string), "repoguide:feedback-instruction") {
+	if strings.Contains(reason, "repoguide:feedback-instruction") {
 		t.Fatalf("expected stop-hook reason to omit HTML wrapper markers, got %v", decision["reason"])
+	}
+	if strings.Contains(reason, "## RepoGuide feedback") {
+		t.Fatalf("expected stop-hook reason to omit the full feedback markdown block, got %v", decision["reason"])
 	}
 
 	// second Stop in the same session must not block again

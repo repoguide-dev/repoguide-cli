@@ -215,7 +215,7 @@ func InstallClaudePlugin(binPath string) (string, error) {
 	manifest := map[string]any{
 		"$schema":     "https://anthropic.com/claude-code/plugin.schema.json",
 		"name":        "repoguide",
-		"version":     "1.0.1",
+		"version":     "1.0.2",
 		"description": "Repo-specific context routing. Calls repoguide_get_repo_experience once per task/session, not once per message.",
 		"author": map[string]any{
 			"name": "RepoGuide",
@@ -327,7 +327,7 @@ func codexMarketplaceManifest() map[string]any {
 func codexPluginManifest() map[string]any {
 	return map[string]any{
 		"name":        "repoguide",
-		"version":     "1.0.1",
+		"version":     "1.0.2",
 		"description": "Repo-specific context routing for Codex.",
 		"author": map[string]any{
 			"name": "RepoGuide",
