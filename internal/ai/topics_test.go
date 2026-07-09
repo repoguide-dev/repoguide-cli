@@ -142,6 +142,10 @@ func TestBuildTopicPromptAllowsFewerTopicsWhenUnsure(t *testing.T) {
 		"Return fewer topics than input groups when the evidence is weak, noisy, duplicated, or too ambiguous.",
 		"Every topic object must include group_ids with one or more input group_id values.",
 		"If you are unsure, omit the topic instead of inventing a generic one.",
+		"Create topics per domain area",
+		"Use the whole group/bundle context when selecting files for a topic.",
+		"You may also split one input group into multiple topics when the prompts, files, or workflows show distinct recurring areas within the same directory.",
+		"Prefer area-focused topics over layer buckets",
 	}
 	for _, want := range checks {
 		if !strings.Contains(prompt, want) {

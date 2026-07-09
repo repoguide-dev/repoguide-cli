@@ -75,8 +75,8 @@ const SharedFieldRules = `- name: 3-6 words, Title Case, e.g. "MCP context routi
 
 // SharedNamingExamples is the topic naming guidance shared by both prompts.
 const SharedNamingExamples = `Topic naming examples:
-Good: "MCP context routing", "Session telemetry parsing", "CLI auth flow", "Repository analysis reports"
-Bad:  "CLI", "Backend", "Miscellaneous changes", "Improve code", "Update files"`
+Good: "MCP context routing", "Session telemetry parsing", "CLI auth flow", "Repository analysis reports", "Payment retry handling", "Webhook event reconciliation"
+Bad:  "CLI", "Backend", "Frontend", "UI features", "Miscellaneous changes", "Improve code", "Update files"`
 
 const topicPromptRepoCtxTemplate = `Repository context (file structure and docs):
 %s
@@ -110,16 +110,23 @@ Important rules:
 - Skip groups entirely if you are not confident they represent a distinct recurring workflow.
 - When session_count is 0, infer topics from file names, types, and the repository context above instead of prompts.
 - You may merge multiple related groups into one topic when prompts and files clearly point to the same recurring work.
+- You may also split one input group into multiple topics when the prompts, files, or workflows show distinct recurring areas within the same directory. Reuse the same group_id across those topics only when each topic has a clearly different focus.
 - Every topic object must include group_ids with one or more input group_id values.
 - Keep output order aligned to the first referenced group_id for each topic.
 - Do not invent files not present in the input data.
+- Use the whole group/bundle context when selecting files for a topic. Relevant files may come from top_edited_files, top_read_files, test_files, seen_with, file_labels, and read_before_edit_hints across the group, not only from the most obvious prompt wording.
 - When repository context with a file structure is provided, prefer file paths that appear in it. If a frequently-touched path from session data no longer exists in the file structure (e.g. the repo was reorganized), the sessions are stale: use the current path if the mapping is obvious, otherwise omit the file rather than emitting a dead path.
 - Prefer evidence from recent sessions (see last_active and prompt order) over older sessions when they conflict.
 - Prefer developer intent from prompts over directory names.
 - seen_with entries are candidates for cross_cutting_files: include them if relevant, skip if incidental.
 - If you are unsure, omit the topic instead of inventing a generic one.
 - Ignore repeated command-like strings, corrupted prompt fragments, obvious tool noise, and low-signal identifiers unless reinforced by file evidence.
+- Create topics per domain area: each topic should map to one recurring business/domain concept, feature area, workflow, integration, or service boundary that an agent would intentionally choose.
 - Topic names must describe a recurring kind of work, not a folder name.
+- Prefer area-focused topics over layer buckets: name the concrete feature, workflow, page, service, or integration, not "frontend", "backend", "UI", or the whole app area.
+- If one directory contains multiple recurring features, split them by developer intent and touched files instead of collapsing them into one broad layer topic.
+- If two sets of sessions touch the same layer but different domains, create separate topics for those domains rather than one combined layer topic.
+- For each domain topic, use the surrounding group/bundle evidence to pull in the larger relevant file context: include neighboring schema, shared state, validators, tests, and cross-cutting files when they materially support the domain.
 - Avoid vague names like "Backend updates", "CLI changes", "Code improvements".
 - A topic is a domain area agents return to repeatedly, not a single task. If a group's prompts describe one specific fix, feature, or one-off request with no sign of repeat activity elsewhere in the input, do not mint a topic from it alone - fold it into a broader domain topic if one fits, otherwise omit it.
 - Name and summary the topic by the domain it covers (e.g. "Session telemetry parsing"), not by the task that happened to generate the evidence (e.g. "Fix telemetry timestamp bug").
@@ -173,7 +180,7 @@ Return a JSON array. Each object represents one topic and may reference one or m
 ]
 
 Field rules:
-- group_ids: 1+ input group_id values. Use each input group at most once across the whole output.
+ - group_ids: 1+ input group_id values. Reuse a group_id across multiple topics only when the same directory truly contains multiple distinct recurring areas; otherwise use each input group once.
 ` + SharedFieldRules + `
 
 ` + SharedNamingExamples + `

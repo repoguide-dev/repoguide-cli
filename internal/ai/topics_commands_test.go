@@ -108,6 +108,12 @@ func TestTopicPromptDemandsEvidenceBasedOutput(t *testing.T) {
 		"last_active",
 		"omit the file rather than emitting a dead path",
 		"Prefer evidence from recent sessions",
+		"Create topics per domain area",
+		"Use the whole group/bundle context when selecting files for a topic",
+		// topic granularity should stay focused
+		"Prefer area-focused topics over layer buckets",
+		"split them by developer intent and touched files instead of collapsing them into one broad layer topic",
+		"Reuse a group_id across multiple topics only when the same directory truly contains multiple distinct recurring areas",
 	}
 	for _, want := range wants {
 		if !strings.Contains(prompt, want) {
@@ -116,6 +122,21 @@ func TestTopicPromptDemandsEvidenceBasedOutput(t *testing.T) {
 	}
 	if strings.Contains(prompt, "always empty array") {
 		t.Fatalf("prompt still forbids observed test commands")
+	}
+}
+
+func TestBuildFeedbackTopicPromptPrefersFocusedRecurringAreas(t *testing.T) {
+	prompt := prompts.BuildFeedbackTopicPrompt("Storefront React UI Features", "feedback", "{}", "[]")
+	wants := []string{
+		"Create topics per domain area",
+		"Prefer the smallest recurring domain that will help routing",
+		"Use the broader session/group evidence when choosing files",
+		`Avoid layer-only names like "Frontend" or "Backend", or other broad umbrella names`,
+	}
+	for _, want := range wants {
+		if !strings.Contains(prompt, want) {
+			t.Fatalf("feedback prompt missing %q", want)
+		}
 	}
 }
 
