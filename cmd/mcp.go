@@ -1029,7 +1029,7 @@ func (m mcpInstallModel) viewClientSelect() string {
 		}
 	}
 	if claudeIdx >= 0 && m.clientChecked[claudeIdx] {
-		lines = append(lines, "", muted.Render("Claude Code selected: will also write MCP instruction to CLAUDE.md in confirmed repos."))
+		lines = append(lines, "", muted.Render("Claude Code selected: will also install RepoGuide hooks (not a CLAUDE.md block) in confirmed repos."))
 	}
 	lines = append(lines, "", muted.Render("enter toggle  •  space continue  •  q quit"))
 	return lipgloss.NewStyle().Padding(1, 2).Render(strings.Join(lines, "\n"))

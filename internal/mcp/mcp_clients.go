@@ -373,14 +373,6 @@ func codexPluginHooksConfig(binPath string) map[string]any {
 					"timeout": 5,
 				}},
 			}},
-			"Stop": []map[string]any{{
-				"hooks": []map[string]any{{
-					"name":    "RepoGuide feedback reminder",
-					"type":    "command",
-					"command": "\"" + binPath + "\" mcp hook stop",
-					"timeout": 5,
-				}},
-			}},
 		},
 	}
 }

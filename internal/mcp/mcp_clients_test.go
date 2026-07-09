@@ -87,42 +87,32 @@ func TestCodexPluginMCPConfigUsesRepoGuideServer(t *testing.T) {
 	}
 }
 
-func TestCodexPluginHooksConfigInstallsPromptAndStopHooks(t *testing.T) {
+func TestCodexPluginHooksConfigInstallsPromptHookOnly(t *testing.T) {
 	cfg := codexPluginHooksConfig("/tmp/repoguide")
 	hooks, ok := cfg["hooks"].(map[string]any)
 	if !ok {
 		t.Fatalf("hooks = %T, want map[string]any", cfg["hooks"])
 	}
-	for event, want := range map[string]struct {
-		command string
-		name    string
-	}{
-		"UserPromptSubmit": {
-			command: "\"/tmp/repoguide\" mcp hook prompt",
-			name:    "RepoGuide task routing",
-		},
-		"Stop": {
-			command: "\"/tmp/repoguide\" mcp hook stop",
-			name:    "RepoGuide feedback reminder",
-		},
-	} {
-		groups, ok := hooks[event].([]map[string]any)
-		if !ok || len(groups) != 1 {
-			t.Fatalf("%s groups = %#v, want one hook group", event, hooks[event])
-		}
-		entries, ok := groups[0]["hooks"].([]map[string]any)
-		if !ok || len(entries) != 1 {
-			t.Fatalf("%s hooks = %#v, want one command hook", event, groups[0]["hooks"])
-		}
-		if got := entries[0]["name"]; got != want.name {
-			t.Fatalf("%s name = %v, want %q", event, got, want.name)
-		}
-		if got := entries[0]["command"]; got != want.command {
-			t.Fatalf("%s command = %v, want %q", event, got, want.command)
-		}
-		if got := entries[0]["timeout"]; got != 5 {
-			t.Fatalf("%s timeout = %v, want 5", event, got)
-		}
+
+	groups, ok := hooks["UserPromptSubmit"].([]map[string]any)
+	if !ok || len(groups) != 1 {
+		t.Fatalf("UserPromptSubmit groups = %#v, want one hook group", hooks["UserPromptSubmit"])
+	}
+	entries, ok := groups[0]["hooks"].([]map[string]any)
+	if !ok || len(entries) != 1 {
+		t.Fatalf("UserPromptSubmit hooks = %#v, want one command hook", groups[0]["hooks"])
+	}
+	if got := entries[0]["name"]; got != "RepoGuide task routing" {
+		t.Fatalf("UserPromptSubmit name = %v, want %q", got, "RepoGuide task routing")
+	}
+	if got := entries[0]["command"]; got != "\"/tmp/repoguide\" mcp hook prompt" {
+		t.Fatalf("UserPromptSubmit command = %v, want %q", got, "\"/tmp/repoguide\" mcp hook prompt")
+	}
+	if got := entries[0]["timeout"]; got != 5 {
+		t.Fatalf("UserPromptSubmit timeout = %v, want 5", got)
+	}
+	if _, ok := hooks["Stop"]; ok {
+		t.Fatalf("Stop hook should be omitted for Codex, got %#v", hooks["Stop"])
 	}
 }
 
