@@ -367,6 +367,7 @@ func codexPluginHooksConfig(binPath string) map[string]any {
 		"hooks": map[string]any{
 			"UserPromptSubmit": []map[string]any{{
 				"hooks": []map[string]any{{
+					"name":    "RepoGuide task routing",
 					"type":    "command",
 					"command": "\"" + binPath + "\" mcp hook prompt",
 					"timeout": 5,
@@ -374,6 +375,7 @@ func codexPluginHooksConfig(binPath string) map[string]any {
 			}},
 			"Stop": []map[string]any{{
 				"hooks": []map[string]any{{
+					"name":    "RepoGuide feedback reminder",
 					"type":    "command",
 					"command": "\"" + binPath + "\" mcp hook stop",
 					"timeout": 5,

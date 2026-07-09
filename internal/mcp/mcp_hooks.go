@@ -137,9 +137,17 @@ func claudeSettingsLocalPath(repoPath string) string {
 }
 
 func claudeHookCommand(binPath, event string) map[string]any {
+	name := "RepoGuide hook"
+	switch event {
+	case "prompt":
+		name = "RepoGuide task routing"
+	case "stop":
+		name = "RepoGuide feedback reminder"
+	}
 	return map[string]any{
 		"hooks": []any{
 			map[string]any{
+				"name":    name,
 				"type":    "command",
 				"command": "\"" + binPath + "\" mcp hook " + event,
 				"timeout": 5,

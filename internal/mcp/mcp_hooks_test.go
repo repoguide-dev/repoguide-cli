@@ -195,6 +195,9 @@ func TestInstallAndRemoveClaudeCodeHooksRoundTrip(t *testing.T) {
 	if !strings.Contains(string(data), "mcp hook prompt") || !strings.Contains(string(data), "mcp hook stop") {
 		t.Fatalf("expected both hooks wired, got %s", data)
 	}
+	if !strings.Contains(string(data), "RepoGuide task routing") || !strings.Contains(string(data), "RepoGuide feedback reminder") {
+		t.Fatalf("expected named hooks, got %s", data)
+	}
 
 	// simulate a user's own unrelated hook already present, on the same events
 	var raw map[string]any

@@ -93,9 +93,18 @@ func TestCodexPluginHooksConfigInstallsPromptAndStopHooks(t *testing.T) {
 	if !ok {
 		t.Fatalf("hooks = %T, want map[string]any", cfg["hooks"])
 	}
-	for event, wantCommand := range map[string]string{
-		"UserPromptSubmit": "\"/tmp/repoguide\" mcp hook prompt",
-		"Stop":             "\"/tmp/repoguide\" mcp hook stop",
+	for event, want := range map[string]struct {
+		command string
+		name    string
+	}{
+		"UserPromptSubmit": {
+			command: "\"/tmp/repoguide\" mcp hook prompt",
+			name:    "RepoGuide task routing",
+		},
+		"Stop": {
+			command: "\"/tmp/repoguide\" mcp hook stop",
+			name:    "RepoGuide feedback reminder",
+		},
 	} {
 		groups, ok := hooks[event].([]map[string]any)
 		if !ok || len(groups) != 1 {
@@ -105,8 +114,11 @@ func TestCodexPluginHooksConfigInstallsPromptAndStopHooks(t *testing.T) {
 		if !ok || len(entries) != 1 {
 			t.Fatalf("%s hooks = %#v, want one command hook", event, groups[0]["hooks"])
 		}
-		if got := entries[0]["command"]; got != wantCommand {
-			t.Fatalf("%s command = %v, want %q", event, got, wantCommand)
+		if got := entries[0]["name"]; got != want.name {
+			t.Fatalf("%s name = %v, want %q", event, got, want.name)
+		}
+		if got := entries[0]["command"]; got != want.command {
+			t.Fatalf("%s command = %v, want %q", event, got, want.command)
 		}
 		if got := entries[0]["timeout"]; got != 5 {
 			t.Fatalf("%s timeout = %v, want 5", event, got)
