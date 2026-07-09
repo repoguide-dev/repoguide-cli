@@ -18,6 +18,10 @@ import (
 // maxSessionPrompts caps user prompts extracted from a single session.
 const maxSessionPrompts = 20
 
+// promptsPerSession caps how many of a session's prompts reach the topic prompt.
+// The first few state the task; later ones are usually corrections.
+const promptsPerSession = 3
+
 const (
 	topicModel         = "claude-sonnet-4-6"
 	minSessions        = 1
@@ -310,12 +314,17 @@ func buildCandidates(bundle contracts.RepoAnalysisBundle) []topicCandidate {
 		dir := filepath.ToSlash(sub.Name)
 		dirPrefix := dir + "/"
 
-		// prompts from related sessions (newest first), capped at 12
+		// First promptsPerSession prompts of every related session (newest first).
+		// Breadth over depth: one session's follow-ups must not crowd out the
+		// task-defining prompts of the other sessions in this directory.
 		seenP := map[string]struct{}{}
 		var prompts []string
 		for _, ref := range sub.RelatedSessions {
-			for _, p := range sessionPrompts[ref.ID] {
-				if _, ok := seenP[p]; !ok && len(prompts) < 12 {
+			for i, p := range sessionPrompts[ref.ID] {
+				if i >= promptsPerSession {
+					break
+				}
+				if _, ok := seenP[p]; !ok {
 					seenP[p] = struct{}{}
 					prompts = append(prompts, p)
 				}

@@ -184,3 +184,28 @@ func TestTopicCuratorPromptDemandsSessionEvidence(t *testing.T) {
 		}
 	}
 }
+
+// A chatty session must not crowd out the task-defining prompts of the other
+// sessions in its directory - that starvation collapsed topics into layer buckets.
+func TestBuildCandidatesTakesFirstPromptsOfEverySession(t *testing.T) {
+	bundle := contracts.RepoAnalysisBundle{
+		Sessions: []contracts.RepoAnalysisSession{
+			{ID: "s1", Prompts: []string{"add cart page", "fix1", "fix2", "fix3", "fix4"}},
+			{ID: "s2", Prompts: []string{"add checkout form"}},
+			{ID: "s3", Prompts: []string{"add product detail"}},
+		},
+		Subsystems: []contracts.RepoAnalysisSubsystem{{
+			Name:     "storefront/src",
+			Sessions: 3,
+			RelatedSessions: []contracts.RepoAnalysisSessionRef{
+				{ID: "s1"}, {ID: "s2"}, {ID: "s3"},
+			},
+		}},
+	}
+
+	got := buildCandidates(bundle)[0].prompts
+	want := []string{"add cart page", "fix1", "fix2", "add checkout form", "add product detail"}
+	if strings.Join(got, "|") != strings.Join(want, "|") {
+		t.Fatalf("prompts = %v, want %v", got, want)
+	}
+}

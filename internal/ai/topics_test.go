@@ -136,10 +136,11 @@ func TestMaterializeTopicContextsSkipsLowConfidenceTopics(t *testing.T) {
 	}
 }
 
-func TestBuildTopicPromptAllowsFewerTopicsWhenUnsure(t *testing.T) {
+func TestBuildTopicPromptLetsEvidenceSetTopicCount(t *testing.T) {
 	prompt := prompts.BuildTopicPrompt("[]", "")
 	checks := []string{
-		"Return fewer topics than input groups when the evidence is weak, noisy, duplicated, or too ambiguous.",
+		"Return as many topics as the evidence supports - do not target a topic count.",
+		"Judge recurrence across the group's whole prompt list, never from one prompt in isolation",
 		"Every topic object must include group_ids with one or more input group_id values.",
 		"If you are unsure, omit the topic instead of inventing a generic one.",
 		"Create topics per domain area",

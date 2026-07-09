@@ -1140,6 +1140,10 @@ func finalizeDocs(files []RepoAnalysisFile) []RepoAnalysisDoc {
 
 const maxRelatedSessionsPerItem = 8
 
+// Subsystems feed topic generation, which needs to see every session's task to
+// split a directory into distinct topics instead of one layer bucket.
+const maxRelatedSessionsPerSubsystem = 60
+
 type sessionCoverage struct {
 	ref       RepoAnalysisSessionRef
 	timestamp time.Time
@@ -1157,7 +1161,7 @@ func attachRelatedSessions(bundle *RepoAnalysisBundle, repoRoot string, sessions
 
 	for i := range bundle.Subsystems {
 		pathSet := toPathSet(bundle.Subsystems[i].Paths)
-		bundle.Subsystems[i].RelatedSessions = collectRelatedSessions(coverages, func(c sessionCoverage) bool {
+		bundle.Subsystems[i].RelatedSessions = collectRelatedSessionsN(coverages, maxRelatedSessionsPerSubsystem, func(c sessionCoverage) bool {
 			return touchesAny(c.paths, pathSet)
 		})
 	}
@@ -1316,13 +1320,17 @@ func buildSessionSummaries(sessions []backendSession) []RepoAnalysisSession {
 }
 
 func collectRelatedSessions(coverages []sessionCoverage, keep func(sessionCoverage) bool) []RepoAnalysisSessionRef {
-	out := make([]RepoAnalysisSessionRef, 0, maxRelatedSessionsPerItem)
+	return collectRelatedSessionsN(coverages, maxRelatedSessionsPerItem, keep)
+}
+
+func collectRelatedSessionsN(coverages []sessionCoverage, limit int, keep func(sessionCoverage) bool) []RepoAnalysisSessionRef {
+	out := make([]RepoAnalysisSessionRef, 0, limit)
 	for _, coverage := range coverages {
 		if !keep(coverage) {
 			continue
 		}
 		out = append(out, coverage.ref)
-		if len(out) >= maxRelatedSessionsPerItem {
+		if len(out) >= limit {
 			break
 		}
 	}

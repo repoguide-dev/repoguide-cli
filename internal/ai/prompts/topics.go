@@ -105,8 +105,7 @@ Input fields per group:
 - read_before_edit_hints: observed patterns where one file is read before another is edited
 
 Important rules:
-- Return fewer topics than input groups when the evidence is weak, noisy, duplicated, or too ambiguous.
-- It is better to return 4-8 strong topics than to force 12 weak ones.
+- Return as many topics as the evidence supports - do not target a topic count. Emit every distinct recurring work area you can see, and no topic you cannot ground in the input.
 - Skip groups entirely if you are not confident they represent a distinct recurring workflow.
 - When session_count is 0, infer topics from file names, types, and the repository context above instead of prompts.
 - You may merge multiple related groups into one topic when prompts and files clearly point to the same recurring work.
@@ -128,7 +127,7 @@ Important rules:
 - If two sets of sessions touch the same layer but different domains, create separate topics for those domains rather than one combined layer topic.
 - For each domain topic, use the surrounding group/bundle evidence to pull in the larger relevant file context: include neighboring schema, shared state, validators, tests, and cross-cutting files when they materially support the domain.
 - Avoid vague names like "Backend updates", "CLI changes", "Code improvements".
-- A topic is a domain area agents return to repeatedly, not a single task. If a group's prompts describe one specific fix, feature, or one-off request with no sign of repeat activity elsewhere in the input, do not mint a topic from it alone - fold it into a broader domain topic if one fits, otherwise omit it.
+- A topic is a domain area agents return to repeatedly, not a single task. Judge recurrence across the group's whole prompt list, never from one prompt in isolation: prompts come from different sessions, so several separate one-off tasks that all touch the same domain (e.g. "add cart page", "persist cart to localStorage", "add cart quantity controls") are strong evidence for a topic on that domain - mint it. Only when a task stands alone with nothing else in the input touching its domain should you fold it into a broader topic if one fits, or omit it.
 - Name and summary the topic by the domain it covers (e.g. "Session telemetry parsing"), not by the task that happened to generate the evidence (e.g. "Fix telemetry timestamp bug").
 - Keep output compact - it will be injected directly into an agent's context window.
 
