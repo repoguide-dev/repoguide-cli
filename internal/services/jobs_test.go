@@ -40,7 +40,7 @@ func (f *fakeLLM) WriteOrientationHint(_ context.Context, _ string, _ model.Topi
 func (f *fakeLLM) ClassifyFeedback(_ context.Context, _ *model.MCPFeedback) (*model.FeedbackClassification, ai.Usage, error) {
 	return nil, ai.Usage{}, nil
 }
-func (f *fakeLLM) PatchRepoContext(_ context.Context, _ string, _ []*model.MCPFeedback, _ []ai.RepoContextSession) (*ai.RepoContextPatch, ai.Usage, error) {
+func (f *fakeLLM) PatchRepoContext(_ context.Context, _ string, _ []*model.MCPFeedback, _ []ai.RepoContextSession, _ bool) (*ai.RepoContextPatch, ai.Usage, error) {
 	return nil, ai.Usage{}, nil
 }
 

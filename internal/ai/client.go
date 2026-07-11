@@ -17,7 +17,7 @@ type LLM interface {
 	WriteOrientationHint(ctx context.Context, repoContext string, topic model.TopicContext, task string, prompts []string, priorSessions []PriorSession) (string, bool, Usage, error)
 	ClassifyFeedback(ctx context.Context, fb *model.MCPFeedback) (*model.FeedbackClassification, Usage, error)
 	CurateTopicContext(ctx context.Context, topic *model.TopicContext, feedbacks []*model.MCPFeedback, pending []model.TopicPatchSuggestion, sessions []TopicCurationSession) (*TopicCuration, Usage, error)
-	PatchRepoContext(ctx context.Context, current string, feedbacks []*model.MCPFeedback, sessions []RepoContextSession) (*RepoContextPatch, Usage, error)
+	PatchRepoContext(ctx context.Context, current string, feedbacks []*model.MCPFeedback, sessions []RepoContextSession, teamSynced bool) (*RepoContextPatch, Usage, error)
 }
 
 // Client is a handle to the AI capabilities. APIKey overrides ANTHROPIC_API_KEY
@@ -121,10 +121,10 @@ func (c *Client) CurateTopicContext(ctx context.Context, topic *model.TopicConte
 	return curation, usage, err
 }
 
-func (c *Client) PatchRepoContext(ctx context.Context, current string, feedbacks []*model.MCPFeedback, sessions []RepoContextSession) (*RepoContextPatch, Usage, error) {
+func (c *Client) PatchRepoContext(ctx context.Context, current string, feedbacks []*model.MCPFeedback, sessions []RepoContextSession, teamSynced bool) (*RepoContextPatch, Usage, error) {
 	var patch *RepoContextPatch
 	var usage Usage
 	var err error
-	c.withKey(func() { patch, usage, err = PatchRepoContext(ctx, current, feedbacks, sessions) })
+	c.withKey(func() { patch, usage, err = PatchRepoContext(ctx, current, feedbacks, sessions, teamSynced) })
 	return patch, usage, err
 }

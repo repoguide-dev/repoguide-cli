@@ -1,15 +1,23 @@
 package prompts
 
 // RepoContextPatcherSystem is the system prompt for the repo context patch worker.
-var RepoContextPatcherSystem = `You are RepoGuide's repo-context patch worker.
+// teamSynced is true when the repo is shared across a team, meaning feedback and
+// sessions may come from different developers - see RepoContextStructure.
+func RepoContextPatcherSystem(teamSynced bool) string {
+	teamNote := ""
+	if teamSynced {
+		teamNote = "\nFeedback and session data below may come from different developers on the same team. Only patch a row if it is evidenced across multiple developers, not just one person's individual habit."
+	}
+	return `You are RepoGuide's repo-context patch worker.
 
 Given:
 - one repo_id
 - the current repo context document
 - pending feedback with low ratings (≤3 stars)
 - optional session data: user prompts, edited files, and git/apply_patch diff snippets per feedback
+` + teamNote + `
 
-` + RepoContextStructure + `
+` + RepoContextStructure(teamSynced) + `
 
 Propose minimal structured patches to add or remove bullet rows in the appropriate sections.
 
@@ -51,3 +59,4 @@ Return strict JSON:
     }
   ]
 }`
+}

@@ -84,7 +84,8 @@ func truncateRunes(s string, max int) string {
 }
 
 // PatchRepoContext calls Haiku to generate a minimal patch for the repo context based on low-star feedbacks.
-func PatchRepoContext(ctx context.Context, currentContext string, feedbacks []*model.MCPFeedback, sessions []RepoContextSession) (*RepoContextPatch, Usage, error) {
+// teamSynced is true when the repo is shared across a team, meaning feedbacks/sessions may come from different developers.
+func PatchRepoContext(ctx context.Context, currentContext string, feedbacks []*model.MCPFeedback, sessions []RepoContextSession, teamSynced bool) (*RepoContextPatch, Usage, error) {
 	type feedbackInput struct {
 		FeedbackID          string                        `json:"feedback_id"`
 		Task                string                        `json:"task"`
@@ -119,7 +120,7 @@ func PatchRepoContext(ctx context.Context, currentContext string, feedbacks []*m
 		"sessions":        sessions,
 	})
 
-	raw, usage, err := callClaudeWithSystem(ctx, repoContextPatcherModel, prompts.RepoContextPatcherSystem, string(userMsg), 4096)
+	raw, usage, err := callClaudeWithSystem(ctx, repoContextPatcherModel, prompts.RepoContextPatcherSystem(teamSynced), string(userMsg), 4096)
 	if err != nil {
 		return nil, usage, err
 	}

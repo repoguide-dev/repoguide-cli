@@ -48,7 +48,7 @@ func TestBuildRepoAnalysisIncludesRelatedSessionNames(t *testing.T) {
 		},
 	}
 
-	bundle, err := BuildRepoAnalysis(repoRoot, stored)
+	bundle, err := BuildRepoAnalysis(repoRoot, stored, false)
 	if err != nil {
 		t.Fatalf("BuildRepoAnalysis: %v", err)
 	}
@@ -120,7 +120,7 @@ func TestBuildRepoAnalysisIncludesSessionPromptSummaries(t *testing.T) {
 		},
 	}
 
-	bundle, err := BuildRepoAnalysis(repoRoot, stored)
+	bundle, err := BuildRepoAnalysis(repoRoot, stored, false)
 	if err != nil {
 		t.Fatalf("BuildRepoAnalysis: %v", err)
 	}
@@ -161,7 +161,7 @@ func TestBuildRepoAnalysisIgnoresLocalCommandCaveatPrompts(t *testing.T) {
 		},
 	}
 
-	bundle, err := BuildRepoAnalysis(repoRoot, stored)
+	bundle, err := BuildRepoAnalysis(repoRoot, stored, false)
 	if err != nil {
 		t.Fatalf("BuildRepoAnalysis: %v", err)
 	}

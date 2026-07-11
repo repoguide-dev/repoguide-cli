@@ -29,7 +29,8 @@ func (s *ContextService) RebuildRepoContext(ctx context.Context, repoID string) 
 	if repo != nil {
 		repoRoot = repo.RepoRoot
 	}
-	bundle, err := analysis.BuildRepoAnalysis(repoRoot, events)
+	// ponytail: CLI's local event store is per-developer; team aggregation happens in cloud.
+	bundle, err := analysis.BuildRepoAnalysis(repoRoot, events, false)
 	if err != nil {
 		return fmt.Errorf("build bundle: %w", err)
 	}

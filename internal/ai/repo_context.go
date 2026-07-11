@@ -11,9 +11,20 @@ import (
 
 const repoContextModel = "claude-sonnet-4-6"
 
-var repoContextSystemPrompt = `You are analyzing historical conversations between a developer and coding agents.
+// repoContextSystemPrompt builds the system prompt. teamSynced is true when the
+// repo is shared across a team (bundle.Repo.TeamSynced), meaning the session
+// interactions below come from different developers rather than one - the
+// document should then capture the team's shared usage, not one person's.
+func repoContextSystemPrompt(teamSynced bool) string {
+	who := "a developer"
+	meaning := "this developer means"
+	if teamSynced {
+		who = "developers on a team"
+		meaning = "this team means"
+	}
+	return `You are analyzing historical conversations between ` + who + ` and coding agents.
 
-Your task is to produce a compact context file shown to future agents before they begin work. The file has one job: help the agent correctly interpret what this developer means when they write a prompt.
+Your task is to produce a compact context file shown to future agents before they begin work. The file has one job: help the agent correctly interpret what ` + meaning + ` when they write a prompt.
 
 Your PRIMARY source is the session interactions. Use repository documentation only to understand domain terminology.
 
@@ -21,7 +32,7 @@ Do NOT summarize conversations. Do NOT invent patterns. Only include what is evi
 
 Ignore: one-off requests, specific tasks, temporary state, personal information.
 
-` + prompts.RepoContextStructure + `
+` + prompts.RepoContextStructure(teamSynced) + `
 
 Requirements:
 
@@ -31,6 +42,7 @@ Requirements:
 * Do not quote or reference specific conversations.
 * Write for an experienced agent reading this once before starting work.
 * Omit any section with no signal.`
+}
 
 // GenerateRepoContext produces a compact context file from session interactions and docs.
 func GenerateRepoContext(ctx context.Context, bundle contracts.RepoAnalysisBundle, docs map[string]string) (string, Usage, error) {
@@ -44,7 +56,7 @@ func GenerateRepoContext(ctx context.Context, bundle contracts.RepoAnalysisBundl
 
 func buildRepoContextPrompt(bundle contracts.RepoAnalysisBundle, docs map[string]string) string {
 	var sb strings.Builder
-	sb.WriteString(repoContextSystemPrompt)
+	sb.WriteString(repoContextSystemPrompt(bundle.Repo.TeamSynced))
 	sb.WriteString("\n\n---\n\n")
 
 	if len(docs) > 0 {

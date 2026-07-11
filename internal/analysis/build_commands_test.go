@@ -38,7 +38,7 @@ func realisticSession(repoRoot string) model.RepoSessionEvents {
 
 func TestBuildRepoAnalysisExtractsObservedCommands(t *testing.T) {
 	repoRoot := filepath.Clean("/repo")
-	bundle, err := BuildRepoAnalysis(repoRoot, []model.RepoSessionEvents{realisticSession(repoRoot)})
+	bundle, err := BuildRepoAnalysis(repoRoot, []model.RepoSessionEvents{realisticSession(repoRoot)}, false)
 	if err != nil {
 		t.Fatalf("BuildRepoAnalysis: %v", err)
 	}
@@ -73,7 +73,7 @@ func TestBuildRepoAnalysisExtractsObservedCommands(t *testing.T) {
 
 func TestBuildRepoAnalysisKeepsCorrectionPromptIntact(t *testing.T) {
 	repoRoot := filepath.Clean("/repo")
-	bundle, err := BuildRepoAnalysis(repoRoot, []model.RepoSessionEvents{realisticSession(repoRoot)})
+	bundle, err := BuildRepoAnalysis(repoRoot, []model.RepoSessionEvents{realisticSession(repoRoot)}, false)
 	if err != nil {
 		t.Fatalf("BuildRepoAnalysis: %v", err)
 	}
@@ -104,7 +104,7 @@ func TestAmbiguousSearchesExcludeUnextractableShellCommands(t *testing.T) {
 	}
 	bundle, err := BuildRepoAnalysis(repoRoot, []model.RepoSessionEvents{{
 		Agent: "claude", ID: "s1", Name: "noise", UpdatedAt: time.Now(), Events: events,
-	}})
+	}}, false)
 	if err != nil {
 		t.Fatalf("BuildRepoAnalysis: %v", err)
 	}

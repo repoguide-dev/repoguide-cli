@@ -496,7 +496,8 @@ func (s *JobService) patchRepo(ctx context.Context, j *model.ContextPatchJob) er
 		}
 		sessions = append(sessions, ai.BuildRepoContextSession(fb.FeedbackID, fb.SessionID, events))
 	}
-	patch, _, err := s.ai.PatchRepoContext(ctx, entry.Content, fbPtrs, sessions)
+	// ponytail: CLI's local event store is per-developer; team aggregation happens in cloud.
+	patch, _, err := s.ai.PatchRepoContext(ctx, entry.Content, fbPtrs, sessions, false)
 	if err != nil {
 		return err
 	}
@@ -529,7 +530,8 @@ func (s *JobService) createNewTopic(ctx context.Context, j *model.ContextPatchJo
 	if err != nil {
 		return model.TopicContext{}, err
 	}
-	bundle, err := analysis.BuildRepoAnalysis(repoRoot, events)
+	// ponytail: CLI's local event store is per-developer; team aggregation happens in cloud.
+	bundle, err := analysis.BuildRepoAnalysis(repoRoot, events, false)
 	if err != nil {
 		return model.TopicContext{}, err
 	}

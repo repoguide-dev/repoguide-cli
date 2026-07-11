@@ -12,9 +12,11 @@ import (
 )
 
 // BuildRepoAnalysis builds a RepoAnalysisBundle from all stored session events for a repo.
-func BuildRepoAnalysis(repoRoot string, stored []model.RepoSessionEvents) (RepoAnalysisBundle, error) {
+// teamSynced marks whether the repo is shared across a team (see model.Repo.TeamID),
+// meaning the sessions below may come from different developers.
+func BuildRepoAnalysis(repoRoot string, stored []model.RepoSessionEvents, teamSynced bool) (RepoAnalysisBundle, error) {
 	if len(stored) == 0 {
-		return emptyBundle(repoRoot), nil
+		return emptyBundle(repoRoot, teamSynced), nil
 	}
 
 	sessions := make([]backendSession, 0, len(stored))
@@ -32,21 +34,22 @@ func BuildRepoAnalysis(repoRoot string, stored []model.RepoSessionEvents) (RepoA
 		})
 	}
 
-	return buildBundle(repoRoot, sessions), nil
+	return buildBundle(repoRoot, sessions, teamSynced), nil
 }
 
-func emptyBundle(repoRoot string) RepoAnalysisBundle {
+func emptyBundle(repoRoot string, teamSynced bool) RepoAnalysisBundle {
 	return RepoAnalysisBundle{
 		Version: bundleVersion,
 		Repo: RepoAnalysisRepo{
 			Name:        filepath.Base(strings.TrimRight(repoRoot, string(filepath.Separator))),
 			Root:        repoRoot,
 			GeneratedAt: time.Now().UTC().Format(time.RFC3339),
+			TeamSynced:  teamSynced,
 		},
 	}
 }
 
-func buildBundle(repoRoot string, sessions []backendSession) RepoAnalysisBundle {
+func buildBundle(repoRoot string, sessions []backendSession, teamSynced bool) RepoAnalysisBundle {
 	generatedAt := time.Now().UTC()
 	var earliest time.Time
 	for _, s := range sessions {
@@ -69,6 +72,7 @@ func buildBundle(repoRoot string, sessions []backendSession) RepoAnalysisBundle 
 			Root:        repoRoot,
 			RangeDays:   rangeDays,
 			GeneratedAt: generatedAt.Format(time.RFC3339),
+			TeamSynced:  teamSynced,
 		},
 		Sessions: buildSessionSummaries(sessions),
 	}
