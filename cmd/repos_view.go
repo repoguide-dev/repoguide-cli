@@ -81,6 +81,7 @@ func (m reposModel) renderDetail() string {
 		"",
 		fmt.Sprintf("%s %s", headStyle.Render("Path:"), renderRepoPath(repo.Repo.RepoRoot)),
 		fmt.Sprintf("%s %s", headStyle.Render("Mode:"), repoModeLabel(repo.Repo)),
+		fmt.Sprintf("%s %s", headStyle.Render("Type:"), repoTypeLabel(repo.Repo)),
 		fmt.Sprintf("%s %s", headStyle.Render("Status:"), repoStatusLabel(*repo)),
 		fmt.Sprintf("%s %s", headStyle.Render("Repo ID:"), valueOrFallback(repo.Repo.RepoID, "-")),
 		fmt.Sprintf("%s %s", headStyle.Render("Last synced:"), repoLastSynced(*repo)),
@@ -107,12 +108,20 @@ func repoTableColumns(width int) []tableColumn {
 	}
 	return []tableColumn{
 		{title: "Repo", width: max(18, width/6)},
+		{title: "Type", width: 8},
 		{title: "Status", width: 8},
 		{title: "Path", width: max(24, width/2)},
 		{title: "Total", width: 5},
 		{title: "Codex", width: 5},
 		{title: "Claude", width: 6},
 	}
+}
+
+func repoTypeLabel(repo internal.RepoConfig) string {
+	if strings.TrimSpace(repo.TeamID) != "" {
+		return "team"
+	}
+	return "personal"
 }
 
 func repoLastSynced(repo sessionimport.RepoSessionStats) string {

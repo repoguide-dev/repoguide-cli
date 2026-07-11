@@ -689,16 +689,13 @@ func ParseRepoEventsForLocal(repoID, repoRoot string) ([]model.RepoSessionEvents
 func readHintFileDocs(repoID, repoRoot string) map[string]string {
 	storeDir := filepath.Join(RepoGuideDir(), "repos", repoID)
 	cfg, err := LoadRepoConfigFile(storeDir)
-	if err != nil || len(cfg.HintFiles) == 0 {
+	if err != nil {
 		return nil
 	}
 	return readHintFileDocsFromConfig(cfg, repoRoot)
 }
 
 func readHintFileDocsFromConfig(cfg RepoConfig, repoRoot string) map[string]string {
-	if len(cfg.HintFiles) == 0 {
-		return nil
-	}
 	docs := make(map[string]string, len(cfg.HintFiles))
 	for _, name := range cfg.HintFiles {
 		path, ok := safeHintFilePath(repoRoot, name)
@@ -709,6 +706,12 @@ func readHintFileDocsFromConfig(cfg RepoConfig, repoRoot string) map[string]stri
 		if err == nil {
 			docs[name] = string(data)
 		}
+	}
+	for name, content := range readAgentMemoryDocs(repoRoot) {
+		docs[name] = content
+	}
+	if len(docs) == 0 {
+		return nil
 	}
 	return docs
 }

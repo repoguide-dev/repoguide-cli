@@ -77,6 +77,7 @@ type RepoConfig struct {
 	RepoRoot       string                `json:"repoRoot"`
 	InitializedAt  string                `json:"initializedAt"`
 	Mode           string                `json:"mode,omitempty"` // "local" or "online"
+	TeamID         string                `json:"teamId,omitempty"`
 	LocalAIBackend string                `json:"localAiBackend,omitempty"`
 	HintFiles      []string              `json:"hintFiles,omitempty"`
 	CommitHooks    RepoCommitHooksConfig `json:"commitHooks,omitempty"`
@@ -566,7 +567,7 @@ func InitRepoAt(repoRoot string, opts InitOptions) (InitResult, error) {
 
 // LinkRepoAt binds an existing git checkout to a specific RepoGuide repo ID.
 // It is used for shared/team repos where the cloud repo already exists.
-func LinkRepoAt(repoRoot, repoID, mode string) (InitResult, error) {
+func LinkRepoAt(repoRoot, repoID, mode string, teamID ...string) (InitResult, error) {
 	root, err := gitOutputAt(repoRoot, "rev-parse", "--show-toplevel")
 	if err != nil || root == "" {
 		return InitResult{}, ErrNotGitRepo
@@ -578,10 +579,6 @@ func LinkRepoAt(repoRoot, repoID, mode string) (InitResult, error) {
 	storeRoot := home(".repoguide")
 	storeDir := filepath.Join(storeRoot, "repos", repoID)
 
-	currentRepoID, _ := gitOutputAt(root, "config", "--get", "repoguide.repoId")
-	if currentRepoID != "" && currentRepoID != repoID {
-		return InitResult{}, fmt.Errorf("repository already initialized with %s", currentRepoID)
-	}
 	if err := ensureStore(storeRoot, storeDir, root, repoID, mode); err != nil {
 		return InitResult{}, err
 	}
@@ -599,6 +596,9 @@ func LinkRepoAt(repoRoot, repoID, mode string) (InitResult, error) {
 		return InitResult{}, err
 	}
 	setCommitHooksEnabled(&cfg, false)
+	if len(teamID) > 0 {
+		cfg.TeamID = strings.TrimSpace(teamID[0])
+	}
 	if err := SaveRepoConfigFile(storeDir, cfg); err != nil {
 		return InitResult{}, err
 	}

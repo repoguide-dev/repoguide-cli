@@ -10,7 +10,7 @@ import (
 
 // LLM is the AI interface used by the services layer. Implemented by *Client.
 type LLM interface {
-	DeriveTopicsAndGenerateContext(ctx context.Context, bundle contracts.RepoAnalysisBundle) ([]model.TopicContext, Usage, error)
+	DeriveTopicsAndGenerateContext(ctx context.Context, bundle contracts.RepoAnalysisBundle, docs map[string]string) ([]model.TopicContext, Usage, error)
 	GenerateRepoContext(ctx context.Context, bundle contracts.RepoAnalysisBundle, docs map[string]string) (string, Usage, error)
 	GenerateTopicContextFromFeedback(ctx context.Context, suggestedName, feedback string, bundle contracts.RepoAnalysisBundle, events []model.SessionEvent, existingTopics []model.TopicContext) (*model.TopicContext, string, Usage, error)
 	SelectTopic(ctx context.Context, repoContext string, topics []TopicSummary, task string, prompts []string) (SelectTopicResult, Usage, error)
@@ -59,11 +59,11 @@ func (c *Client) withKey(f func()) {
 	f()
 }
 
-func (c *Client) DeriveTopicsAndGenerateContext(ctx context.Context, bundle contracts.RepoAnalysisBundle) ([]model.TopicContext, Usage, error) {
+func (c *Client) DeriveTopicsAndGenerateContext(ctx context.Context, bundle contracts.RepoAnalysisBundle, docs map[string]string) ([]model.TopicContext, Usage, error) {
 	var topics []model.TopicContext
 	var usage Usage
 	var err error
-	c.withKey(func() { topics, usage, err = DeriveTopicsAndGenerateContext(ctx, bundle) })
+	c.withKey(func() { topics, usage, err = DeriveTopicsAndGenerateContext(ctx, bundle, docs) })
 	return topics, usage, err
 }
 

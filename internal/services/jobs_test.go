@@ -22,7 +22,7 @@ type fakeLLM struct {
 func (f *fakeLLM) CurateTopicContext(_ context.Context, _ *model.TopicContext, _ []*model.MCPFeedback, _ []model.TopicPatchSuggestion, _ []ai.TopicCurationSession) (*ai.TopicCuration, ai.Usage, error) {
 	return f.curateResult, ai.Usage{}, f.curateErr
 }
-func (f *fakeLLM) DeriveTopicsAndGenerateContext(_ context.Context, _ contracts.RepoAnalysisBundle) ([]model.TopicContext, ai.Usage, error) {
+func (f *fakeLLM) DeriveTopicsAndGenerateContext(_ context.Context, _ contracts.RepoAnalysisBundle, _ map[string]string) ([]model.TopicContext, ai.Usage, error) {
 	return nil, ai.Usage{}, nil
 }
 func (f *fakeLLM) GenerateRepoContext(_ context.Context, _ contracts.RepoAnalysisBundle, _ map[string]string) (string, ai.Usage, error) {

@@ -3,6 +3,7 @@ package cmd
 import (
 	"fmt"
 	"os"
+	"path/filepath"
 
 	"github.com/charmbracelet/bubbles/spinner"
 	"github.com/charmbracelet/bubbles/table"
@@ -120,6 +121,7 @@ func (m *reposModel) applyRepoTableData() {
 	for i, r := range m.repos {
 		rows[i] = table.Row{
 			repoDisplayName(r.Repo),
+			repoTypeLabel(r.Repo),
 			repoStatusLabel(r),
 			renderRepoPath(r.Repo.RepoRoot),
 			fmt.Sprintf("%d", r.Total),
@@ -342,6 +344,11 @@ func loadRepoStatsCmd() tea.Cmd {
 				if info != nil {
 					stats[i].Online = true
 					stats[i].LastSynced = info.LastSynced
+					if info.TeamID != "" {
+						stats[i].Repo.TeamID = info.TeamID
+						storeDir := filepath.Join(sessionimport.RepoGuideDir(), "repos", stats[i].Repo.RepoID)
+						_ = internal.SaveRepoConfigFile(storeDir, stats[i].Repo)
+					}
 				}
 			}
 		}

@@ -3,6 +3,7 @@ package cmd
 import (
 	"fmt"
 
+	"github.com/repoguide/repoguide-cli/internal"
 	clientauth "github.com/repoguide/repoguide-cli/internal/auth"
 	repopkg "github.com/repoguide/repoguide-cli/internal/repo"
 	"github.com/spf13/cobra"
@@ -35,6 +36,7 @@ func runStatus(_ *cobra.Command, _ []string) {
 
 	printSection("RepoGuide",
 		"Initialized",
+		"Type: "+repoTypeLabelForStatus(status.StoreDir),
 		"Repo ID: "+status.RepoID,
 		"Store: "+renderPath(status.StoreDir),
 	)
@@ -45,4 +47,12 @@ func runStatus(_ *cobra.Command, _ []string) {
 	} else {
 		printSection("Account", "Not signed in", "Run: repoguide login")
 	}
+}
+
+func repoTypeLabelForStatus(storeDir string) string {
+	cfg, err := internal.LoadRepoConfigFile(storeDir)
+	if err == nil && cfg.TeamID != "" {
+		return "Team repo (team " + cfg.TeamID + ")"
+	}
+	return "Personal repo"
 }

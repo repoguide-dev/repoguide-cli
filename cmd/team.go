@@ -80,14 +80,25 @@ func runTeamJoin(cmd *cobra.Command, _ []string) error {
 		}
 		previousRepoID, _ = internal.GitRepoID(repoPath)
 	}
-	result, err := internal.LinkRepoAt(repoPath, repo.RepoID, "online")
-	if err != nil {
-		return err
-	}
 	if strings.TrimSpace(previousRepoID) != "" && previousRepoID != repo.RepoID {
+		// Flush sessions that were collected under the personal repo ID before
+		// moving its cloud data into the shared team repo.
+		if err := client.UploadRepoEvents(previousRepoID, repoPath); err != nil {
+			return fmt.Errorf("sync existing repo before joining team: %w", err)
+		}
 		if err := client.MergeTeamRepo(team.ID, repo.RepoID, previousRepoID); err != nil {
 			return err
 		}
+	}
+	result, err := internal.LinkRepoAt(repoPath, repo.RepoID, "online", team.ID)
+	if err != nil {
+		return err
+	}
+	// Do not wait for the next MCP request to sync sessions collected while the
+	// checkout was being connected. Uploading events also refreshes the team's
+	// derived analysis bundle on the backend.
+	if err := client.UploadRepoEvents(repo.RepoID, repoPath); err != nil {
+		return fmt.Errorf("sync team repo after joining: %w", err)
 	}
 	fmt.Printf("Connected %s to %s (%s)\n", result.RepoRoot, repoLabel(*repo), team.Name)
 	return nil

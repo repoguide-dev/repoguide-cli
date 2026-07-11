@@ -55,10 +55,11 @@ type topicCandidate struct {
 }
 
 // DeriveTopicsAndGenerateContext derives named TopicContext entries from a RepoAnalysisBundle.
-func DeriveTopicsAndGenerateContext(ctx context.Context, bundle contracts.RepoAnalysisBundle) ([]model.TopicContext, Usage, error) {
+func DeriveTopicsAndGenerateContext(ctx context.Context, bundle contracts.RepoAnalysisBundle, docs map[string]string) ([]model.TopicContext, Usage, error) {
 	candidates := buildCandidates(bundle)
 	candidates = filterAndRank(candidates)
 	repoCtx := buildRepoFileContext(bundle.Repo.Root, recentPrompts(bundle.Sessions, 50))
+	repoCtx = appendSharedDocs(repoCtx, docs)
 	if len(candidates) == 0 {
 		candidates = buildFileStructureCandidates(bundle.Repo.Root)
 		if len(candidates) == 0 {
@@ -66,6 +67,27 @@ func DeriveTopicsAndGenerateContext(ctx context.Context, bundle contracts.RepoAn
 		}
 	}
 	return nameTopics(ctx, candidates, repoCtx)
+}
+
+func appendSharedDocs(repoCtx string, docs map[string]string) string {
+	if len(docs) == 0 {
+		return repoCtx
+	}
+	keys := make([]string, 0, len(docs))
+	for name := range docs {
+		keys = append(keys, name)
+	}
+	sort.Strings(keys)
+	var sb strings.Builder
+	sb.WriteString(repoCtx)
+	for _, name := range keys {
+		text := strings.TrimSpace(docs[name])
+		if len(text) > 2000 {
+			text = text[:2000] + "…"
+		}
+		fmt.Fprintf(&sb, "\n\n=== %s ===\n%s", name, text)
+	}
+	return strings.TrimSpace(sb.String())
 }
 
 // GenerateTopicContextFromFeedback generates a TopicContext for a single topic, using agent
