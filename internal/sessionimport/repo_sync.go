@@ -442,6 +442,29 @@ func (c CloudClient) SyncAllRepos() {
 	}
 }
 
+// MarkRepoConnected tells the backend this account's local checkout is now
+// linked to a team repo, so it shows as connected immediately instead of
+// waiting for the first session upload.
+func (c CloudClient) MarkRepoConnected(teamID, repoID string) error {
+	if strings.TrimSpace(c.Token) == "" || strings.TrimSpace(c.BaseURL) == "" {
+		return nil
+	}
+	req, err := c.newRequest(http.MethodPost, "/api/teams/"+url.PathEscape(teamID)+"/repos/"+url.PathEscape(repoID)+"/connect", nil)
+	if err != nil {
+		return err
+	}
+	req.Header.Set("Authorization", "Bearer "+c.Token)
+	resp, err := c.httpClient().Do(req)
+	if err != nil {
+		return err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode >= 300 {
+		return backendRequestError("team repo connect failed", resp)
+	}
+	return nil
+}
+
 func (c CloudClient) UploadRepoEvents(repoID, repoRoot string) error {
 	if strings.TrimSpace(c.Token) == "" || strings.TrimSpace(c.BaseURL) == "" || strings.TrimSpace(repoID) == "" {
 		return nil

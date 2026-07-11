@@ -94,6 +94,10 @@ func runTeamJoin(cmd *cobra.Command, _ []string) error {
 	if err != nil {
 		return err
 	}
+	// Mark as connected immediately, don't wait for a session to actually sync.
+	if err := client.MarkRepoConnected(team.ID, repo.RepoID); err != nil {
+		return fmt.Errorf("mark team repo connected: %w", err)
+	}
 	// Do not wait for the next MCP request to sync sessions collected while the
 	// checkout was being connected. Uploading events also refreshes the team's
 	// derived analysis bundle on the backend.
