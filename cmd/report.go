@@ -562,7 +562,7 @@ pre{background:#0c0b0a;border:1px solid #262420;border-radius:10px;padding:14px;
 <div class="modal-head"><div><h2 id="share-modal-title">Share this report</h2><p>Create one private link, then choose where to post it.</p></div><button class="modal-close" onclick="closeShareModal()" aria-label="Close">×</button></div>
 {{if .RepoAverages.Sessions}}<p class="share-tagline" id="share-copy">Before their first edit in my repository, my AI agents read {{printf "%.1f" .RepoAverages.AvgReads}} files, load {{compactNumber .RepoAverages.AvgContextTokens}} context tokens, and make {{printf "%.1f" .RepoAverages.AvgToolCalls}} tool calls. The code isn’t the bottleneck. Relearning it is.</p>{{else}}<p class="share-tagline" id="share-copy">My AI agents keep rediscovering {{.Repo.Name}}. The code isn’t the bottleneck. Relearning it is.</p>{{end}}
 <div class="share-steps">
-<div class="share-step"><span class="step-number">1</span><button id="create-share-button" onclick="createShareLink()">Create 7-day report link</button><p class="share-status" id="status">Nothing is uploaded until you create the link.</p></div>
+<div class="share-step"><span class="step-number">1</span><button id="create-share-button" onclick="createShareLink()">Create 14-day report link</button><p class="share-status" id="status">Nothing is uploaded until you create the link.</p></div>
 <div class="share-step"><span class="step-number">2</span><button class="secondary compact" id="linkedin-link" disabled onclick="shareOnLinkedIn()">Copy post &amp; open LinkedIn</button><p class="share-status" id="linkedin-status">LinkedIn can’t be pre-filled from a link — the post text is copied, paste it in.</p></div>
 <div class="share-step"><span class="step-number">3</span><a class="button-link disabled" id="x-link" aria-disabled="true" target="_blank" rel="noopener">Share post on X</a></div>
 </div>
@@ -612,7 +612,7 @@ function createShareLink(){
   fetch('/upload',{method:'POST'}).then(r=>r.json()).then(d=>{
     if(d.error){document.getElementById('status').textContent='Failed: '+d.error;button.disabled=false;button.textContent='Try again';return;}
     sharedReportURL=d.url;
-    button.textContent='7-day link created';
+    button.textContent='14-day link created';
     document.getElementById('status').textContent='Ready · '+d.url+' · expires '+d.expires_at;
     document.getElementById('linkedin-link').disabled=false;
     var xText=postText()+'\n\n#AIEngineering #CodingAgents';

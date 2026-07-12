@@ -56,7 +56,7 @@ func TestReportPageRenders(t *testing.T) {
 			t.Fatalf("rendered output must not contain %q", bad)
 		}
 	}
-	for _, want := range []string{"The agent navigation tax", "rediscovering your repo", "8.2 files", "11.5 tool calls", "The code isn’t the bottleneck", "Use RepoGuide on your next task", ">Share</button>", "Share this report", "Create 7-day report link", "Copy post &amp; open LinkedIn", "Share post on X", "https://x.com/intent/post"} {
+	for _, want := range []string{"The agent navigation tax", "rediscovering your repo", "8.2 files", "11.5 tool calls", "The code isn’t the bottleneck", "Use RepoGuide on your next task", ">Share</button>", "Share this report", "Create 14-day report link", "Copy post &amp; open LinkedIn", "Share post on X", "https://x.com/intent/post"} {
 		if !bytes.Contains(buf.Bytes(), []byte(want)) {
 			t.Fatalf("expected rendered output to contain %q", want)
 		}
