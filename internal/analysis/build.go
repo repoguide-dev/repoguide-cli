@@ -3,9 +3,11 @@ package analysis
 import (
 	"fmt"
 	"math"
+	"os"
 	"path/filepath"
 	"sort"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/repoguide/repoguide-core/model"
@@ -272,6 +274,32 @@ func buildFileActivity(repoRoot string, m sessionMetrics) map[string]fileActivit
 	return out
 }
 
+var nestedRepoDirsCache sync.Map // repoRoot string -> []string
+
+// nestedRepoDirs returns the first-level subdirectories of repoRoot that are
+// themselves git repos (submodules, or a multi-repo workspace checked out
+// side by side). Used to canonicalize paths recorded relative to one of
+// those nested repos instead of repoRoot.
+func nestedRepoDirs(repoRoot string) []string {
+	if v, ok := nestedRepoDirsCache.Load(repoRoot); ok {
+		return v.([]string)
+	}
+	var dirs []string
+	entries, err := os.ReadDir(repoRoot)
+	if err == nil {
+		for _, e := range entries {
+			if !e.IsDir() {
+				continue
+			}
+			if _, err := os.Stat(filepath.Join(repoRoot, e.Name(), ".git")); err == nil {
+				dirs = append(dirs, e.Name())
+			}
+		}
+	}
+	nestedRepoDirsCache.Store(repoRoot, dirs)
+	return dirs
+}
+
 func repoRelPath(repoRoot, path string) string {
 	path = strings.TrimSpace(path)
 	if path == "" {
@@ -287,6 +315,20 @@ func repoRelPath(repoRoot, path string) string {
 	}
 	if clean == "." || clean == ".." || strings.HasPrefix(clean, ".."+string(filepath.Separator)) {
 		return ""
+	}
+	// A relative path may have been recorded from inside a nested repo (git
+	// submodule / multi-repo workspace), so "db/db.go" and
+	// "repoguide-cloud/db/db.go" can be the same file recorded two
+	// different ways. Prefer whichever resolution actually exists on disk
+	// so both normalize to one canonical path instead of splitting the
+	// session/read counts across two "different" files.
+	if _, err := os.Stat(filepath.Join(repoRoot, clean)); err == nil {
+		return filepath.ToSlash(clean)
+	}
+	for _, sub := range nestedRepoDirs(repoRoot) {
+		if _, err := os.Stat(filepath.Join(repoRoot, sub, clean)); err == nil {
+			return filepath.ToSlash(filepath.Join(sub, clean))
+		}
 	}
 	return filepath.ToSlash(clean)
 }

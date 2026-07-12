@@ -84,7 +84,7 @@ func DetectLocalSetup() LocalSetupStatus {
 }
 
 func ListConfiguredRepos() ([]RepoConfig, error) {
-	root := filepath.Join(home(".repoguide"), "repos")
+	root := filepath.Join(RepoGuideDir(), "repos")
 	entries, err := os.ReadDir(root)
 	if err != nil {
 		if os.IsNotExist(err) {

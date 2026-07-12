@@ -13,6 +13,11 @@ var searchToolNames = map[string]bool{"WebSearch": true, "WebFetch": true, "Grep
 var searchShellCmds = map[string]bool{"grep": true, "rg": true, "ag": true, "ack": true, "find": true}
 var shellSearchQueryPattern = regexp.MustCompile(`(?:^|[\s;&|])(?:rg|grep|ag|ack)\s+(?:-[^\s]+\s+)*(?:"([^"]+)"|'([^']+)'|([^\s]+))`)
 
+// xmlTagPattern strips auto-injected wrapper tags (e.g. <environment_context>,
+// <cwd>, <shell>) from prompt text so they don't get shown as if they were
+// the user's actual ask.
+var xmlTagPattern = regexp.MustCompile(`<[^>]+>`)
+
 var modelPricing = map[string][4]float64{
 	"claude-fable-5":    {10.00, 50.00, 1.00, 12.50},
 	"claude-opus-4-8":   {5.00, 25.00, 0.50, 6.25},

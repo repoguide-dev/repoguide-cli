@@ -34,7 +34,7 @@ func CurrentRepoStore() (RepoConfig, string, error) {
 	if repoID == "" {
 		return RepoConfig{}, "", ErrRepoNotInitialized
 	}
-	storeDir := filepath.Join(home(".repoguide"), "repos", repoID)
+	storeDir := filepath.Join(RepoGuideDir(), "repos", repoID)
 	return RepoConfig{
 		RepoID:   repoID,
 		RepoRoot: repoRoot,

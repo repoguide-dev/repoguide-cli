@@ -9,6 +9,14 @@ import (
 
 const bundleVersion = 11
 
+// IsDirectoryPath reports whether path looks like a directory (or the repo
+// root) rather than an individual file, using the same heuristic the
+// clustering step uses to keep directories out of relationship traces.
+func IsDirectoryPath(path string) bool {
+	k := relationshipPathKind(path)
+	return k == "directory" || k == "repo_root"
+}
+
 type sessionMetrics struct {
 	UserPromptCount  int
 	ToolCallCount    int

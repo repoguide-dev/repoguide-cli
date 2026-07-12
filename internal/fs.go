@@ -12,7 +12,18 @@ func glob(pattern string) []string {
 	return matches
 }
 
+var repoGuideDirOverride string
+
+// SetRepoGuideDirOverride redirects RepoGuideDir() to dir for the rest of
+// the process. Used by `report` to run against an ephemeral temp store
+// instead of the user's real ~/.repoguide when the repo was never
+// initialized. Pass "" to restore the default.
+func SetRepoGuideDirOverride(dir string) { repoGuideDirOverride = dir }
+
 func RepoGuideDir() string {
+	if repoGuideDirOverride != "" {
+		return repoGuideDirOverride
+	}
 	return home(".repoguide")
 }
 

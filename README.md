@@ -4,6 +4,16 @@ Your repo doesn't need more context. Your agents need experience. Not search - t
 
 Website: [repoguide.dev](https://repoguide.dev)
 
+## Try a local report without installing
+
+From inside a Git repository:
+
+```sh
+curl -fsSL https://repoguide.dev/report.sh | sh
+```
+
+This downloads a checksum-verified release to a temporary directory, opens the report locally, and removes the binary when the report stops. It does not install RepoGuide or change your `PATH`.
+
 ## Install
 
 ```sh

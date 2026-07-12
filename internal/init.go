@@ -115,7 +115,7 @@ func SaveRepoConfigFile(storeDir string, cfg RepoConfig) error {
 	return writeJSON(filepath.Join(storeDir, "repo.json"), cfg)
 }
 
-func globalConfigPath() string { return home(".repoguide", "config.json") }
+func globalConfigPath() string { return filepath.Join(RepoGuideDir(), "config.json") }
 
 func LoadGlobalConfig() (GlobalConfig, error) {
 	data, err := os.ReadFile(globalConfigPath())
@@ -145,7 +145,7 @@ func InitRepo(opts InitOptions) (InitResult, error) {
 	}
 
 	existingRepoID, _ := gitOutput("config", "--get", "repoguide.repoId")
-	storeRoot := home(".repoguide")
+	storeRoot := RepoGuideDir()
 
 	// If git config has no ID, check local store by repo_root to avoid creating duplicates.
 	if existingRepoID == "" {
@@ -222,6 +222,23 @@ func InitRepo(opts InitOptions) (InitResult, error) {
 		CommitHooksEnabled: commitHooksEnabled(cfg),
 		Agents:             DetectInitSources(repoRoot),
 	}, nil
+}
+
+// InitEphemeralRepo registers repoRoot inside the current RepoGuideDir()
+// (typically a temp directory the caller set via SetRepoGuideDirOverride)
+// so session data can be read without a prior `repoguide init`. Unlike
+// InitRepo, it never touches the repo's real git config.
+func InitEphemeralRepo(repoRoot string) (string, error) {
+	repoID, err := generateRepoID(repoRoot)
+	if err != nil {
+		return "", err
+	}
+	storeRoot := RepoGuideDir()
+	storeDir := filepath.Join(storeRoot, "repos", repoID)
+	if err := ensureStore(storeRoot, storeDir, repoRoot, repoID, "local"); err != nil {
+		return "", err
+	}
+	return repoID, nil
 }
 
 func ensureStore(storeRoot, storeDir, repoRoot, repoID, mode string) error {
@@ -425,7 +442,7 @@ func gitOutputAt(repoRoot string, args ...string) (string, error) {
 // is only used for duplicate-repoID detection during init, so a small
 // self-contained copy is preferable to restructuring the package graph.
 func listConfiguredRepos() ([]RepoConfig, error) {
-	root := filepath.Join(home(".repoguide"), "repos")
+	root := filepath.Join(RepoGuideDir(), "repos")
 	entries, err := os.ReadDir(root)
 	if err != nil {
 		if os.IsNotExist(err) {
@@ -481,7 +498,7 @@ func InitRepoAt(repoRoot string, opts InitOptions) (InitResult, error) {
 	}
 
 	existingRepoID, _ := gitOutputAt(root, "config", "--get", "repoguide.repoId")
-	storeRoot := home(".repoguide")
+	storeRoot := RepoGuideDir()
 
 	if existingRepoID == "" {
 		if repos, _ := listConfiguredRepos(); len(repos) > 0 {
@@ -576,7 +593,7 @@ func LinkRepoAt(repoRoot, repoID, mode string, teamID ...string) (InitResult, er
 	if repoID == "" {
 		return InitResult{}, fmt.Errorf("repo ID required")
 	}
-	storeRoot := home(".repoguide")
+	storeRoot := RepoGuideDir()
 	storeDir := filepath.Join(storeRoot, "repos", repoID)
 
 	if err := ensureStore(storeRoot, storeDir, root, repoID, mode); err != nil {

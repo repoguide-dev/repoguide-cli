@@ -1,6 +1,7 @@
 package analysis
 
 import (
+	"os"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -171,5 +172,42 @@ func TestBuildRepoAnalysisIgnoresLocalCommandCaveatPrompts(t *testing.T) {
 	}
 	if got := bundle.Sessions[0].Prompts; len(got) != 1 || got[0] != "real prompt" {
 		t.Fatalf("expected caveat prompt to be ignored, got %#v", got)
+	}
+}
+
+// TestRepoRelPathCanonicalizesNestedRepoPaths guards against a real bug: in a
+// multi-repo workspace (a container repo with nested git repos checked out
+// inside it, e.g. submodules), some sessions record a file relative to the
+// nested repo's own root ("backend/server/repo_handlers.go") while others
+// record it relative to the container root
+// ("repoguide-cloud/backend/server/repo_handlers.go"). Both must resolve to
+// the same canonical path or session/read counts silently split in two.
+func TestRepoRelPathCanonicalizesNestedRepoPaths(t *testing.T) {
+	repoRoot := t.TempDir()
+	nested := filepath.Join(repoRoot, "repoguide-cloud")
+	if err := os.MkdirAll(filepath.Join(nested, ".git"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	target := filepath.Join(nested, "backend", "server")
+	if err := os.MkdirAll(target, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(target, "repo_handlers.go"), []byte("package server"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	fromNestedRoot := repoRelPath(repoRoot, "backend/server/repo_handlers.go")
+	fromContainerRoot := repoRelPath(repoRoot, "repoguide-cloud/backend/server/repo_handlers.go")
+	if fromNestedRoot != fromContainerRoot {
+		t.Fatalf("expected both recordings to canonicalize to the same path, got %q vs %q", fromNestedRoot, fromContainerRoot)
+	}
+	if want := "repoguide-cloud/backend/server/repo_handlers.go"; fromNestedRoot != want {
+		t.Fatalf("expected canonical path %q, got %q", want, fromNestedRoot)
+	}
+
+	// A path that genuinely doesn't exist anywhere still falls back to its
+	// cleaned, as-recorded form rather than erroring or dropping it.
+	if got := repoRelPath(repoRoot, "unknown/made_up.go"); got != "unknown/made_up.go" {
+		t.Fatalf("expected unresolved path to fall back to cleaned form, got %q", got)
 	}
 }
