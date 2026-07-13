@@ -64,8 +64,7 @@ jobs:
   release:
     needs: tag
     if: needs.tag.outputs.created == 'true'
-    # macos-latest so `codesign` (used by the goreleaser post-build hook to
-    # ad-hoc sign darwin binaries) is actually available on the runner.
+    # macos-latest provides codesign and notarytool for the signed macOS builds.
     runs-on: macos-latest
     permissions:
       contents: write
@@ -89,6 +88,25 @@ jobs:
         with:
           go-version-file: repoguide-cli/go.mod
 
+      - name: Import Developer ID certificate
+        env:
+          APPLE_CERTIFICATE_P12_BASE64: ${{ secrets.APPLE_CERTIFICATE_P12_BASE64 }}
+          APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
+        run: |
+          set -euo pipefail
+          CERTIFICATE_PATH="$RUNNER_TEMP/developer-id.p12"
+          KEYCHAIN_PATH="$RUNNER_TEMP/repoguide-signing.keychain-db"
+          KEYCHAIN_PASSWORD="$(uuidgen)"
+
+          printf '%s' "$APPLE_CERTIFICATE_P12_BASE64" | base64 -D > "$CERTIFICATE_PATH"
+          security create-keychain -p "$KEYCHAIN_PASSWORD" "$KEYCHAIN_PATH"
+          security set-keychain-settings -lut 21600 "$KEYCHAIN_PATH"
+          security unlock-keychain -p "$KEYCHAIN_PASSWORD" "$KEYCHAIN_PATH"
+          security import "$CERTIFICATE_PATH" -k "$KEYCHAIN_PATH" -P "$APPLE_CERTIFICATE_PASSWORD" -A -t cert -f pkcs12
+          security list-keychain -d user -s "$KEYCHAIN_PATH" "$HOME/Library/Keychains/login.keychain-db"
+          security set-key-partition-list -S apple-tool:,apple:,codesign: -s -k "$KEYCHAIN_PASSWORD" "$KEYCHAIN_PATH"
+          security find-identity -v -p codesigning "$KEYCHAIN_PATH"
+
       - uses: goreleaser/goreleaser-action@v6
         with:
           version: latest
@@ -97,3 +115,30 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ secrets.RELEASES_REPO_TOKEN }}
           HOMEBREW_TAP_GITHUB_TOKEN: ${{ secrets.HOMEBREW_TAP_GITHUB_TOKEN }}
+          APPLE_SIGNING_IDENTITY: "Developer ID Application: Yoav Schneider (8YW7223V89)"
+
+      - name: Notarize macOS archives
+        env:
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+          APPLE_APP_SPECIFIC_PASSWORD: ${{ secrets.APPLE_APP_SPECIFIC_PASSWORD }}
+        working-directory: repoguide-cli
+        run: |
+          set -euo pipefail
+          shopt -s nullglob
+          archives=(dist/repoguide_*_darwin_*.zip)
+          if (( ${#archives[@]} == 0 )); then
+            echo "No macOS archives found to notarize."
+            exit 1
+          fi
+          for archive in "${archives[@]}"; do
+            xcrun notarytool submit "$archive" \
+              --apple-id "$APPLE_ID" \
+              --team-id "$APPLE_TEAM_ID" \
+              --password "$APPLE_APP_SPECIFIC_PASSWORD" \
+              --wait
+          done
+
+      - name: Remove signing keychain
+        if: always()
+        run: security delete-keychain "$RUNNER_TEMP/repoguide-signing.keychain-db" || true

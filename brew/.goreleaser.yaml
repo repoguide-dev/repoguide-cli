@@ -26,16 +26,19 @@ builds:
         goarch: arm64
     hooks:
       post:
-        # ponytail: ad-hoc sign (no Developer ID) so Apple Silicon doesn't SIGKILL
-        # the unsigned binary on launch. Upgrade to a real Developer ID + notarization
-        # if Gatekeeper's "unidentified developer" prompt becomes a problem.
-        - cmd: sh -c 'case "{{ .Target }}" in darwin_*) codesign --force --sign - "{{ .Path }}";; esac'
+        # Sign macOS binaries with the Developer ID identity imported by the
+        # release workflow. The timestamp keeps the signature valid after the
+        # certificate eventually expires.
+        - cmd: sh -c 'case "{{ .Target }}" in darwin_*) codesign --force --sign "{{ .Env.APPLE_SIGNING_IDENTITY }}" --timestamp --options runtime "{{ .Path }}";; esac'
 
 archives:
   - id: repoguide
     name_template: "repoguide_{{ .Version }}_{{ .Os }}_{{ .Arch }}"
     format_overrides:
       - goos: windows
+        formats: [zip]
+      # Apple notarization accepts ZIP archives, not the default tar.gz.
+      - goos: darwin
         formats: [zip]
 
 checksum:
