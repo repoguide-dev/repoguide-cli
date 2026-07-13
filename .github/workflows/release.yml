@@ -132,11 +132,36 @@ jobs:
             exit 1
           fi
           for archive in "${archives[@]}"; do
-            xcrun notarytool submit "$archive" \
+            submission="$(xcrun notarytool submit "$archive" \
               --apple-id "$APPLE_ID" \
               --team-id "$APPLE_TEAM_ID" \
               --password "$APPLE_APP_SPECIFIC_PASSWORD" \
-              --wait
+              --output-format json)"
+            submission_id="$(plutil -extract id raw - <<< "$submission")"
+            echo "Submitted $archive to Apple (submission: $submission_id)."
+
+            deadline=$((SECONDS + 1800))
+            while true; do
+              info="$(xcrun notarytool info "$submission_id" \
+                --apple-id "$APPLE_ID" \
+                --team-id "$APPLE_TEAM_ID" \
+                --password "$APPLE_APP_SPECIFIC_PASSWORD" \
+                --output-format json)"
+              status="$(plutil -extract status raw - <<< "$info")"
+              echo "Notarization $submission_id: $status"
+              case "$status" in
+                Accepted) break ;;
+                Invalid|Rejected)
+                  echo "$info"
+                  exit 1
+                  ;;
+              esac
+              if (( SECONDS >= deadline )); then
+                echo "Apple did not finish notarization within 30 minutes. Submission: $submission_id"
+                exit 1
+              fi
+              sleep 30
+            done
           done
 
       - name: Remove signing keychain
