@@ -1133,19 +1133,22 @@ func runMCPInstall(cmd *cobra.Command, _ []string) error {
 }
 
 func runMCPInstallApprove(noHooks bool) error {
-	all, _ := sessionimport.LoadAllSessionRepoRoots()
 	var repos []string
-	for _, r := range all {
-		if repopkg.IsRepoInitialized(r) {
-			repos = append(repos, r)
+	clientOnly := os.Getenv("REPOGUIDE_MCP_CLIENTS_ONLY") == "1"
+	if !clientOnly {
+		all, _ := sessionimport.LoadAllSessionRepoRoots()
+		for _, r := range all {
+			if repopkg.IsRepoInitialized(r) {
+				repos = append(repos, r)
+			}
+		}
+		// prefer just the current repo if it's initialized
+		if cur, err := internal.CurrentRepoRoot(); err == nil && repopkg.IsRepoInitialized(cur) {
+			repos = []string{cur}
 		}
 	}
-	// prefer just the current repo if it's initialized
-	if cur, err := internal.CurrentRepoRoot(); err == nil && repopkg.IsRepoInitialized(cur) {
-		repos = []string{cur}
-	}
 	if len(repos) == 0 {
-		fmt.Println("No initialized repos found; installing the MCP client integration only.")
+		fmt.Println("Installing MCP client integration only.")
 	}
 
 	for _, repoPath := range repos {
