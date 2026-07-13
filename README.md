@@ -45,8 +45,10 @@ repoguide setup --offline
 Chosen at `repoguide setup` / `repoguide repo init` time via the `--offline` flag:
 
 - **Cloud mode** (default) signs in to the hosted RepoGuide backend (`repoguide login`) and uses it for AI analysis and sync. No API key to manage yourself.
-- **Offline mode** (`--offline`) never talks to the backend — no login, no sync, nothing leaves your machine. Session parsing, AI analysis, and storage all run locally (SQLite-backed). It still needs a way to call Claude, so first run asks you to pick one:
+- **Offline mode** (`--offline`) never talks to the backend — no login, no sync, nothing leaves your machine. Session parsing, AI analysis, and storage all run locally (SQLite-backed). It still needs a local AI backend, so first run asks you to pick one:
   - the `claude` CLI, if you're already logged in via Claude Code, or
+  - the `codex` CLI, if you're already logged in via Codex, or
+  - the `gemini` CLI, if you're already logged in via Gemini, or
   - an `ANTHROPIC_API_KEY` you provide.
 
   Pass `--approve` to skip that prompt and default to the `claude` CLI (useful for scripts/CI). Switch an already-initialized repo to offline mode later with:

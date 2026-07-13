@@ -21,6 +21,9 @@ type Config struct {
 	AnthropicAPIKey string
 	// UseClaudeCLI routes AI calls through the `claude` CLI instead of the HTTP API.
 	UseClaudeCLI bool
+	// CLIBackend routes AI calls through a supported logged-in CLI executable.
+	// Supported values are "claude", "codex", and "gemini".
+	CLIBackend string
 }
 
 // New builds a Runtime from the given store, dispatcher, and config.
@@ -28,8 +31,10 @@ type Config struct {
 // their respective adapter packages.
 func New(s storecontract.Store, jobs storecontract.JobDispatcher, cfg Config) *Runtime {
 	var aiClient ai.LLM
-	if cfg.UseClaudeCLI {
-		aiClient = ai.NewCLIClient()
+	if cfg.CLIBackend != "" {
+		aiClient = ai.NewCLIClient(cfg.CLIBackend)
+	} else if cfg.UseClaudeCLI {
+		aiClient = ai.NewCLIClient("claude")
 	} else {
 		aiClient = ai.NewClient(cfg.AnthropicAPIKey)
 	}

@@ -21,11 +21,12 @@ type LLM interface {
 }
 
 // Client is a handle to the AI capabilities. APIKey overrides ANTHROPIC_API_KEY
-// env var. UseCLI routes calls through the `claude` CLI instead of the HTTP API.
+// env var. CLIBackend routes calls through a logged-in CLI instead of the HTTP API.
 // Inject LLM into services; swap for a nil/stub in tests.
 type Client struct {
-	APIKey string
-	UseCLI bool
+	APIKey     string
+	UseCLI     bool
+	CLIBackend string
 }
 
 // NewClient returns a Client backed by the Anthropic HTTP API.
@@ -34,9 +35,9 @@ func NewClient(apiKey string) *Client {
 	return &Client{APIKey: apiKey}
 }
 
-// NewCLIClient returns a Client that calls `claude -p` as a subprocess.
-func NewCLIClient() *Client {
-	return &Client{UseCLI: true}
+// NewCLIClient returns a Client that calls a supported AI CLI as a subprocess.
+func NewCLIClient(backend string) *Client {
+	return &Client{UseCLI: true, CLIBackend: backend}
 }
 
 // withKey temporarily sets the API key in env (and the useCLI global) for calls that read from env.
@@ -44,8 +45,10 @@ func NewCLIClient() *Client {
 func (c *Client) withKey(f func()) {
 	if c != nil && c.UseCLI {
 		prev := useCLI
+		prevBackend := cliBackend
 		useCLI = true
-		defer func() { useCLI = prev }()
+		cliBackend = c.CLIBackend
+		defer func() { useCLI, cliBackend = prev, prevBackend }()
 		f()
 		return
 	}

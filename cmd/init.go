@@ -49,8 +49,8 @@ func runInit(cmd *cobra.Command, _ []string) error {
 	var localCfg runtime.Config
 	if offlineMode {
 		localCfg = resolveLocalConfig(approve)
-		if localCfg.AnthropicAPIKey == "" && !localCfg.UseClaudeCLI {
-			fmt.Println("No AI backend configured. Set ANTHROPIC_API_KEY, or re-run with --approve to use the claude CLI.")
+		if localCfg.AnthropicAPIKey == "" && !localCfg.UseClaudeCLI && localCfg.CLIBackend == "" {
+			fmt.Println("No AI backend configured. Set ANTHROPIC_API_KEY, or configure an AI CLI executable.")
 			return nil
 		}
 	} else {
@@ -687,13 +687,13 @@ func displayPath(path string) string {
 }
 
 // resolveLocalConfig determines which AI backend to use for local mode.
-// Priority: saved API key → saved UseClaudeCLI → --approve (default to CLI) → interactive choice.
+// Priority: saved API key → saved CLI choice → --approve (default to Claude CLI) → interactive choice.
 func resolveLocalConfig(approve bool) runtime.Config {
 	if key := config.AnthropicAPIKey(); key != "" {
 		return runtime.Config{AnthropicAPIKey: key}
 	}
 	if config.UseClaudeCLI() {
-		return runtime.Config{UseClaudeCLI: true}
+		return runtime.Config{CLIBackend: "claude"}
 	}
 	if approve {
 		_ = config.SetUseClaudeCLI(true)
@@ -705,15 +705,17 @@ func resolveLocalConfig(approve bool) runtime.Config {
 	return promptLocalAIChoice()
 }
 
-// promptLocalAIChoice offers an interactive choice between API key and claude CLI.
+// promptLocalAIChoice offers an interactive choice between API key and supported CLIs.
 func promptLocalAIChoice() runtime.Config {
 	m := initChoiceModel{
-		title: renderSectionTitle("How should RepoGuide call Claude?"),
+		title: renderSectionTitle("How should RepoGuide call AI?"),
 		body: []string{
-			"  Local mode uses Claude to analyze your sessions and build topic context.",
+			"  Local mode uses an AI provider to analyze your sessions and build topic context.",
 		},
 		options: []string{
 			"Use claude CLI (already logged in via Claude Code)",
+			"Use codex CLI (already logged in via Codex)",
+			"Use gemini CLI (already logged in via Gemini)",
 			"Enter Anthropic API key (sk-ant-...)",
 		},
 		cursor: 0,
@@ -722,9 +724,14 @@ func promptLocalAIChoice() runtime.Config {
 	if err != nil || final.(initChoiceModel).quit {
 		return runtime.Config{}
 	}
-	if final.(initChoiceModel).choice() == 0 {
+	switch final.(initChoiceModel).choice() {
+	case 0:
 		_ = config.SetUseClaudeCLI(true)
-		return runtime.Config{UseClaudeCLI: true}
+		return runtime.Config{CLIBackend: "claude"}
+	case 1:
+		return runtime.Config{CLIBackend: "codex"}
+	case 2:
+		return runtime.Config{CLIBackend: "gemini"}
 	}
 	// Prompt for API key.
 	reader := bufio.NewReader(os.Stdin)

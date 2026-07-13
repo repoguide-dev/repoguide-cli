@@ -262,14 +262,16 @@ func (m hintSelectModel) View() string {
 type configBackend int
 
 const (
-	backendCLI configBackend = iota
+	backendClaudeCLI configBackend = iota
+	backendCodexCLI
+	backendGeminiCLI
 	backendAPIKey
 )
 
 type configModel struct {
 	backend  configBackend
 	keyInput textinput.Model
-	cursor   int // 0 = CLI row, 1 = API key row
+	cursor   int
 	applied  bool
 	quit     bool
 	err      string
@@ -282,31 +284,37 @@ func newConfigModel(status repopkg.LocalSetupStatus) configModel {
 	ti.CharLimit = 256
 
 	m := configModel{
-		backend:  backendCLI,
+		backend:  backendClaudeCLI,
 		keyInput: ti,
 	}
 	if cfg, err := internal.LoadRepoConfigFile(status.StoreDir); err == nil {
 		switch cfg.LocalAIBackend {
 		case internal.LocalAIBackendAPI:
 			m.backend = backendAPIKey
-			m.cursor = 1
+			m.cursor = int(backendAPIKey)
 		case internal.LocalAIBackendClaudeCLI:
-			m.backend = backendCLI
+			m.backend = backendClaudeCLI
 			m.cursor = 0
+		case internal.LocalAIBackendCodexCLI:
+			m.backend = backendCodexCLI
+			m.cursor = 1
+		case internal.LocalAIBackendGeminiCLI:
+			m.backend = backendGeminiCLI
+			m.cursor = 2
 		}
 	}
-	if m.backend == backendCLI && m.cursor == 0 {
+	if m.backend == backendClaudeCLI && m.cursor == 0 {
 		if key := config.AnthropicAPIKey(); key != "" && !config.UseClaudeCLI() {
 			m.backend = backendAPIKey
-			m.cursor = 1
+			m.cursor = int(backendAPIKey)
 		}
 	}
 	if key := config.AnthropicAPIKey(); key != "" {
 		ti.SetValue(key)
 		m.keyInput = ti
 	}
-	if m.backend == backendCLI && config.UseClaudeCLI() {
-		m.backend = backendCLI
+	if m.backend == backendClaudeCLI && config.UseClaudeCLI() {
+		m.backend = backendClaudeCLI
 		m.cursor = 0
 	}
 	return m
@@ -334,14 +342,14 @@ func (m configModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			if m.cursor > 0 {
 				m.cursor--
 				m.backend = configBackend(m.cursor)
-				if m.backend == backendCLI {
+				if m.backend != backendAPIKey {
 					m.keyInput.Blur()
 				} else {
 					return m, m.keyInput.Focus()
 				}
 			}
 		case "down", "j":
-			if m.cursor < 1 {
+			if m.cursor < int(backendAPIKey) {
 				m.cursor++
 				m.backend = configBackend(m.cursor)
 				if m.backend == backendAPIKey {
@@ -350,7 +358,7 @@ func (m configModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.keyInput.Blur()
 			}
 		case "tab":
-			m.cursor = 1 - m.cursor
+			m.cursor = (m.cursor + 1) % (int(backendAPIKey) + 1)
 			m.backend = configBackend(m.cursor)
 			if m.backend == backendAPIKey {
 				return m, m.keyInput.Focus()
@@ -379,17 +387,31 @@ func (m configModel) View() string {
 	b.WriteString("\n")
 	b.WriteString(lipgloss.NewStyle().Bold(true).Render("  Local mode AI backend") + "\n\n")
 
-	// Row 0: claude CLI
+	// CLI rows
 	cli := "  ○  claude CLI"
 	if m.cursor == 0 {
 		cli = configSelected.Render("  ›  claude CLI")
 	}
 	b.WriteString(cli + "\n")
 	b.WriteString(configMuted.Render("     Use the `claude` executable - no API key needed") + "\n\n")
+	for _, row := range []struct {
+		backend       configBackend
+		label, detail string
+	}{
+		{backendCodexCLI, "codex CLI", "Use the `codex` executable - no API key needed"},
+		{backendGeminiCLI, "gemini CLI", "Use the `gemini` executable - no API key needed"},
+	} {
+		line := "  ○  " + row.label
+		if m.cursor == int(row.backend) {
+			line = configSelected.Render("  ›  " + row.label)
+		}
+		b.WriteString(line + "\n")
+		b.WriteString(configMuted.Render("     "+row.detail) + "\n\n")
+	}
 
-	// Row 1: API key
+	// API key row
 	apiRow := "  ○  Anthropic API key"
-	if m.cursor == 1 {
+	if m.cursor == int(backendAPIKey) {
 		apiRow = configSelected.Render("  ›  Anthropic API key")
 	}
 	b.WriteString(apiRow + "\n")
@@ -416,12 +438,24 @@ func applyConfigModel(status repopkg.LocalSetupStatus, m configModel) error {
 		return fmt.Errorf("load repo config: %w", err)
 	}
 	switch m.backend {
-	case backendCLI:
+	case backendClaudeCLI:
 		cfg.LocalAIBackend = internal.LocalAIBackendClaudeCLI
 		if err := internal.SaveRepoConfigFile(status.StoreDir, cfg); err != nil {
 			return fmt.Errorf("save repo config: %w", err)
 		}
 		fmt.Println("Switched to claude CLI backend.")
+	case backendCodexCLI:
+		cfg.LocalAIBackend = internal.LocalAIBackendCodexCLI
+		if err := internal.SaveRepoConfigFile(status.StoreDir, cfg); err != nil {
+			return fmt.Errorf("save repo config: %w", err)
+		}
+		fmt.Println("Switched to codex CLI backend.")
+	case backendGeminiCLI:
+		cfg.LocalAIBackend = internal.LocalAIBackendGeminiCLI
+		if err := internal.SaveRepoConfigFile(status.StoreDir, cfg); err != nil {
+			return fmt.Errorf("save repo config: %w", err)
+		}
+		fmt.Println("Switched to gemini CLI backend.")
 	case backendAPIKey:
 		key := m.keyInput.Value()
 		if err := config.SetAnthropicAPIKey(key); err != nil {
@@ -452,6 +486,10 @@ func printConfigStatus(status repopkg.LocalSetupStatus) {
 		}
 	case repoCfg.LocalAIBackend == internal.LocalAIBackendClaudeCLI:
 		fmt.Println("  Backend:  claude CLI")
+	case repoCfg.LocalAIBackend == internal.LocalAIBackendCodexCLI:
+		fmt.Println("  Backend:  codex CLI")
+	case repoCfg.LocalAIBackend == internal.LocalAIBackendGeminiCLI:
+		fmt.Println("  Backend:  gemini CLI")
 	case apiKey != "":
 		fmt.Printf("  Backend:  Anthropic API key (%s)\n", maskKey(apiKey))
 	case config.UseClaudeCLI():

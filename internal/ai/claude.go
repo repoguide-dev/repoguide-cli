@@ -21,9 +21,11 @@ import (
 // "service unavailable" message rather than exposing the raw API response.
 var ErrServiceUnavailable = errors.New("AI service temporarily unavailable")
 
-// useCLI is set by Client.withKey when the client is configured to use the claude CLI.
+// useCLI and cliBackend are set by Client.withKey when the client is configured
+// to use a local AI CLI.
 // ponytail: global flag, same thread-safety caveat as ANTHROPIC_API_KEY env mutation.
 var useCLI bool
+var cliBackend string
 
 const anthropicVersion = "2023-06-01"
 const anthropicRequestTimeout = 5 * time.Minute
@@ -33,19 +35,36 @@ var anthropicHTTPClient = &http.Client{Timeout: anthropicRequestTimeout}
 
 type Usage = contracts.Usage
 
-// callClaudeCLI invokes the `claude` CLI in print mode and returns the response text.
+// callClaudeCLI invokes the configured local AI CLI and returns the response text.
 // system is prepended to the user prompt when non-empty; no caching, no token counts.
 func callClaudeCLI(ctx context.Context, model, system, userPrompt string) (string, Usage, error) {
 	prompt := userPrompt
 	if system != "" {
 		prompt = system + "\n\n" + userPrompt
 	}
-	args := []string{"-p", "--model", model, "--no-session-persistence"}
-	cmd := exec.CommandContext(ctx, "claude", args...)
-	cmd.Stdin = strings.NewReader(prompt)
+	backend := cliBackend
+	if backend == "" {
+		backend = "claude"
+	}
+	var cmd *exec.Cmd
+	switch backend {
+	case "claude":
+		cmd = exec.CommandContext(ctx, "claude", "-p", "--model", model, "--no-session-persistence")
+		cmd.Stdin = strings.NewReader(prompt)
+	case "codex":
+		// Codex uses the model configured in the logged-in CLI profile.
+		cmd = exec.CommandContext(ctx, "codex", "exec", "--skip-git-repo-check", "-")
+		cmd.Stdin = strings.NewReader(prompt)
+	case "gemini":
+		// Gemini uses the model configured in the logged-in CLI profile.
+		cmd = exec.CommandContext(ctx, "gemini", "-p", "")
+		cmd.Stdin = strings.NewReader(prompt)
+	default:
+		return "", Usage{}, fmt.Errorf("unsupported local AI CLI backend %q", backend)
+	}
 	out, err := cmd.Output()
 	if err != nil {
-		return "", Usage{}, fmt.Errorf("claude cli: %w", err)
+		return "", Usage{}, fmt.Errorf("%s cli: %w", backend, err)
 	}
 	return strings.TrimSpace(string(out)), Usage{Model: model}, nil
 }
