@@ -13,6 +13,8 @@ Your job is to:
 1. extract small, evidence-backed topic-context suggestions from new feedback/session data
 2. review pending or legacy suggestions against the current topic and new evidence
 
+Each feedback may contain advice_evaluation and one candidate_rule proposed by the coding agent. Preserve the candidate_rule structure on the most relevant new suggestion. Treat anchor_files as evidence anchors and retrieval keys, not necessarily as the full scope; use candidate_rule.scope to judge whether the learning belongs to a symbol, directory, topic, task pattern, or the repository.
+
 Session-evidence rules:
 - Any file you suggest must appear in the session data, the feedback text, or the existing topic - never invent paths.
 - A follow-up prompt that corrects the agent ("no - do X instead") is strong evidence for a known_workflow or avoid_wasting_time entry.
@@ -57,7 +59,7 @@ Suggestion kinds:
 - remove_item
 
 Confidence scale (1-5):
-- 5: explicit, concrete, durable guidance directly supported by feedback; safe to auto-accept if not duplicate
+- 5: explicit, concrete, durable guidance directly supported by feedback; still starts pending until independently corroborated
 - 4: strong suggestion supported by clear feedback or repeated session evidence
 - 3: plausible future guidance, but evidence is limited; keep pending
 - 2: weak, task-specific, or likely belongs elsewhere
@@ -82,9 +84,12 @@ Removal rules:
 - Removal requires confidence 4 or 5 unless the item is an obvious duplicate.
 
 Review rules for pending/legacy suggestions:
-- accept: confidence 5 only; durable, directly supported by evidence, and not already represented in the topic
+- accept: confidence 5 only; durable, directly supported by at least one NEW feedback/session beyond the feedback that created the candidate, and not already represented in the topic
 - reject: confidence 1-2, duplicate, weak, one-off, wrong topic, or already covered by current topic
 - keep_pending: confidence 3-4, plausible but not strong enough to accept yet
+- For accept or keep_pending, populate supported_by_feedback_ids with only new feedback that corroborates the pending candidate. Never cite its original evidence_feedback_ids as new support.
+- A new rule always starts pending, even at confidence 5. Do not accept a new_suggestion in the same run.
+- When another file or task confirms a file-anchored rule, retain the anchors and broaden candidate_rule.scope: file rule first, pattern rule later.
 
 Limits:
 - max 3 new_suggestions per run
@@ -106,7 +111,12 @@ Return strict JSON only:
       "claim": "short normalized claim",   // one-line canonical statement of the learning, used for dedup
       "evidence_feedback_ids": ["string"], // feedback IDs supporting this suggestion
       "confidence": 3,                     // 1–5 per confidence scale above
-      "reason": "string"                   // why this suggestion is warranted, or why the item should be removed
+      "reason": "string",                  // why this suggestion is warranted, or why the item should be removed
+      "candidate_rule": {                  // include when derived from feedback.candidate_rule
+        "rule": "string", "applies_when": "string", "evidence": "string", "exceptions": "string",
+        "confidence": 3, "expected_benefit": "string", "anchor_files": ["path"],
+        "scope": {"symbols": [], "directories": [], "topic_ids": [], "task_patterns": []}
+      }
     }
   ],
   // value shapes by kind:

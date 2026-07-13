@@ -388,21 +388,17 @@ func (s *JobService) patchTopic(ctx context.Context, j *model.ContextPatchJob) e
 		return err
 	}
 
-	// Persist new suggestions; auto-accept confidence==5.
+	// Persist every new suggestion as a candidate. Even confidence-5 rules need
+	// independent evidence from a later session before they become guidance.
 	now := time.Now().UTC()
 	var toApply []ai.TopicCurationSuggestion
 	var toSave []model.TopicPatchSuggestion
 	for _, ns := range curation.NewSuggestions {
-		status := model.TopicPatchSuggestionPending
-		if ns.Confidence >= 5 {
-			status = model.TopicPatchSuggestionApplied
-			toApply = append(toApply, ns)
-		}
 		toSave = append(toSave, model.TopicPatchSuggestion{
 			SuggestionID:        randID(),
 			RepoID:              j.RepoID,
 			TopicID:             j.TopicID,
-			Status:              status,
+			Status:              model.TopicPatchSuggestionPending,
 			CreatedAt:           now,
 			UpdatedAt:           now,
 			Kind:                ns.Kind,
@@ -413,6 +409,7 @@ func (s *JobService) patchTopic(ctx context.Context, j *model.ContextPatchJob) e
 			EvidenceFeedbackIDs: ns.EvidenceFeedbackIDs,
 			Confidence:          ns.Confidence,
 			Reason:              ns.Reason,
+			CandidateRule:       ns.CandidateRule,
 		})
 	}
 	if len(toSave) > 0 {
@@ -425,23 +422,28 @@ func (s *JobService) patchTopic(ctx context.Context, j *model.ContextPatchJob) e
 	for _, d := range curation.SuggestionDecisions {
 		switch d.Decision {
 		case "accept":
+			if len(d.SupportedByFeedbackIDs) == 0 {
+				continue
+			}
 			existing, err := s.store.Suggestions().GetByID(ctx, d.SuggestionID)
 			if err != nil || existing == nil {
 				continue
 			}
+			evidenceIDs := appendUnique(existing.EvidenceFeedbackIDs, d.SupportedByFeedbackIDs...)
 			toApply = append(toApply, ai.TopicCurationSuggestion{
 				Kind:                existing.Kind,
 				TargetField:         existing.TargetField,
 				Path:                existing.Path,
 				Value:               existing.Value,
 				Claim:               existing.Claim,
-				EvidenceFeedbackIDs: existing.EvidenceFeedbackIDs,
+				EvidenceFeedbackIDs: evidenceIDs,
 				Confidence:          5,
 				Reason:              existing.Reason,
+				CandidateRule:       existing.CandidateRule,
 			})
-			_ = s.store.Suggestions().UpdateStatus(ctx, d.SuggestionID, model.TopicPatchSuggestionApplied, 5)
+			_ = s.store.Suggestions().UpdateStatus(ctx, d.SuggestionID, model.TopicPatchSuggestionApplied, 5, evidenceIDs)
 		case "reject":
-			_ = s.store.Suggestions().UpdateStatus(ctx, d.SuggestionID, model.TopicPatchSuggestionRejected, d.Confidence)
+			_ = s.store.Suggestions().UpdateStatus(ctx, d.SuggestionID, model.TopicPatchSuggestionRejected, d.Confidence, nil)
 		}
 		// keep_pending: no action needed
 	}
@@ -469,6 +471,21 @@ func (s *JobService) patchTopic(ctx context.Context, j *model.ContextPatchJob) e
 		return err
 	}
 	return s.store.Feedback().MarkFeedbacksProcessed(ctx, j.JobID, j.FeedbackIDs)
+}
+
+func appendUnique(values []string, additions ...string) []string {
+	out := append([]string(nil), values...)
+	seen := make(map[string]bool, len(out)+len(additions))
+	for _, value := range out {
+		seen[value] = true
+	}
+	for _, value := range additions {
+		if value != "" && !seen[value] {
+			seen[value] = true
+			out = append(out, value)
+		}
+	}
+	return out
 }
 
 func (s *JobService) patchRepo(ctx context.Context, j *model.ContextPatchJob) error {

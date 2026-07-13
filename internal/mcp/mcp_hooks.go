@@ -11,7 +11,7 @@ import (
 // Claude Code hooks that replace the static CLAUDE.md instruction blocks with
 // dynamic prompt injection: repoguide_get_repo_experience is suggested as soon
 // as the user states a task (UserPromptSubmit), and repoguide_record_feedback
-// is requested once before the agent finishes a session that used it (Stop).
+// is requested once before the agent finishes the repository task (Stop).
 
 type hookPromptPayload struct {
 	SessionID string `json:"session_id"`
@@ -76,25 +76,10 @@ func RunPromptHook(stdin io.Reader, stdout io.Writer, cwd string) error {
 	return nil
 }
 
-// repoToolUsedThisSession reports whether a RepoGuide MCP tool was called in
-// this repo since this session's first prompt. Claude Code never forwards the
-// hook session_id to the MCP server, so tool use is marked per repo and
-// correlated with the session by comparing marker mtimes.
-func repoToolUsedThisSession(repoID, sessionID string) bool {
-	used, err := os.Stat(hookStateFile(repoID, "tool-used"))
-	if err != nil {
-		return false
-	}
-	prompted, err := os.Stat(hookStateFile(sessionID, "prompted"))
-	if err != nil {
-		return false
-	}
-	return !used.ModTime().Before(prompted.ModTime())
-}
-
-// RunStopHook implements the Stop hook: once per session, if a RepoGuide MCP
-// tool was actually called earlier in the session, block the agent from
-// stopping once so it can call repoguide_record_feedback first.
+// RunStopHook implements the Stop hook: once per prompted repository session,
+// block the agent from stopping once so it can evaluate any guidance, record
+// useful/unhelpful files, and propose a candidate rule. Feedback remains useful
+// even when the routing tool was skipped or unavailable.
 func RunStopHook(stdin io.Reader, stdout io.Writer, cwd string) error {
 	var payload hookStopPayload
 	if err := json.NewDecoder(stdin).Decode(&payload); err != nil {
@@ -112,7 +97,7 @@ func RunStopHook(stdin io.Reader, stdout io.Writer, cwd string) error {
 	if err != nil || repoID == "" {
 		return nil
 	}
-	if !repoToolUsedThisSession(repoID, payload.SessionID) {
+	if !hookStateExists(payload.SessionID, "prompted") {
 		return nil
 	}
 	if hookStateExists(payload.SessionID, "feedback-asked") {

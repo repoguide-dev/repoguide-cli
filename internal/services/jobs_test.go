@@ -50,12 +50,14 @@ type trackingSuggestionStore struct {
 	saved    []model.TopicPatchSuggestion
 	pending  []model.TopicPatchSuggestion
 	statuses map[string]string // suggestion_id → final status
+	evidence map[string][]string
 }
 
 func newTrackingStore(pending []model.TopicPatchSuggestion) *trackingSuggestionStore {
 	return &trackingSuggestionStore{
 		pending:  pending,
 		statuses: map[string]string{},
+		evidence: map[string][]string{},
 	}
 }
 
@@ -74,8 +76,9 @@ func (s *trackingSuggestionStore) GetByID(_ context.Context, id string) (*model.
 	}
 	return nil, nil
 }
-func (s *trackingSuggestionStore) UpdateStatus(_ context.Context, id, status string, _ int) error {
+func (s *trackingSuggestionStore) UpdateStatus(_ context.Context, id, status string, _ int, evidence []string) error {
 	s.statuses[id] = status
+	s.evidence[id] = append([]string(nil), evidence...)
 	return nil
 }
 
@@ -124,7 +127,7 @@ func setupFeedback(fs *fakeStore, ids ...string) {
 	}
 }
 
-func TestPatchTopicAutoAppliesConfidence5(t *testing.T) {
+func TestPatchTopicKeepsFirstSessionConfidence5Pending(t *testing.T) {
 	ft := setupTopicStore("r1", model.TopicContext{ID: "t1", Name: "T1"})
 	setupFeedback(ft.s, "fb1")
 
@@ -146,11 +149,11 @@ func TestPatchTopicAutoAppliesConfidence5(t *testing.T) {
 	if len(sugg.saved) != 1 {
 		t.Fatalf("want 1 saved suggestion, got %d", len(sugg.saved))
 	}
-	if sugg.saved[0].Status != model.TopicPatchSuggestionApplied {
-		t.Errorf("want status applied, got %s", sugg.saved[0].Status)
+	if sugg.saved[0].Status != model.TopicPatchSuggestionPending {
+		t.Errorf("want status pending, got %s", sugg.saved[0].Status)
 	}
-	if !contains(ft.s.topics["r1"][0].WhenToUse, "ci pipeline") {
-		t.Errorf("topic not updated: WhenToUse=%v", ft.s.topics["r1"][0].WhenToUse)
+	if contains(ft.s.topics["r1"][0].WhenToUse, "ci pipeline") {
+		t.Errorf("first-session candidate must not update topic: WhenToUse=%v", ft.s.topics["r1"][0].WhenToUse)
 	}
 }
 
@@ -193,7 +196,7 @@ func TestPatchTopicAcceptDecisionAppliesAndMarksApplied(t *testing.T) {
 	llm := &fakeLLM{curateResult: &ai.TopicCuration{
 		TopicID: "t1",
 		SuggestionDecisions: []ai.TopicSuggestionDecision{
-			{SuggestionID: "sug1", Decision: "accept", Confidence: 5},
+			{SuggestionID: "sug1", Decision: "accept", Confidence: 5, SupportedByFeedbackIDs: []string{"fb1"}},
 		},
 	}}
 
@@ -209,6 +212,41 @@ func TestPatchTopicAcceptDecisionAppliesAndMarksApplied(t *testing.T) {
 	}
 	if !contains(ft.s.topics["r1"][0].WhenToUse, "debug flow") {
 		t.Errorf("topic not updated: %v", ft.s.topics["r1"][0].WhenToUse)
+	}
+	if !contains(sugg.evidence["sug1"], "fb1") {
+		t.Errorf("corroborating evidence not persisted: %v", sugg.evidence["sug1"])
+	}
+}
+
+func TestPatchTopicAcceptDecisionWithoutNewEvidenceStaysPending(t *testing.T) {
+	ft := setupTopicStore("r1", model.TopicContext{ID: "t1", Name: "T1"})
+	setupFeedback(ft.s, "fb1")
+
+	existing := model.TopicPatchSuggestion{
+		SuggestionID: "sug1", TopicID: "t1",
+		Status: model.TopicPatchSuggestionPending,
+		Kind:   "add_when_to_use", Value: jsonVal("debug flow"),
+	}
+	sugg := newTrackingStore([]model.TopicPatchSuggestion{existing})
+	llm := &fakeLLM{curateResult: &ai.TopicCuration{
+		TopicID: "t1",
+		SuggestionDecisions: []ai.TopicSuggestionDecision{
+			{SuggestionID: "sug1", Decision: "accept", Confidence: 5},
+		},
+	}}
+
+	svc := newJobSvc(t, llm, sugg, ft)
+	if err := svc.patchTopic(context.Background(), &model.ContextPatchJob{
+		RepoID: "r1", TopicID: "t1", FeedbackIDs: []string{"fb1"},
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	if got := sugg.statuses["sug1"]; got != "" {
+		t.Errorf("candidate status changed without new evidence: %q", got)
+	}
+	if contains(ft.s.topics["r1"][0].WhenToUse, "debug flow") {
+		t.Error("candidate applied without new evidence")
 	}
 }
 

@@ -916,15 +916,24 @@ func (s *suggestionStore) GetByID(ctx context.Context, suggestionID string) (*mo
 	return &sug, nil
 }
 
-func (s *suggestionStore) UpdateStatus(ctx context.Context, suggestionID, status string, confidence int) error {
+func (s *suggestionStore) UpdateStatus(ctx context.Context, suggestionID, status string, confidence int, evidenceFeedbackIDs []string) error {
 	now := time.Now().UTC()
-	// Update status in the row and patch the JSON blob so they stay in sync.
-	_, err := s.db.ExecContext(ctx,
+	suggestion, err := s.GetByID(ctx, suggestionID)
+	if err != nil || suggestion == nil {
+		return err
+	}
+	suggestion.Status = status
+	suggestion.Confidence = confidence
+	suggestion.UpdatedAt = now
+	if len(evidenceFeedbackIDs) > 0 {
+		suggestion.EvidenceFeedbackIDs = append([]string(nil), evidenceFeedbackIDs...)
+	}
+	data, _ := json.Marshal(suggestion)
+	_, err = s.db.ExecContext(ctx,
 		`UPDATE topic_patch_suggestions
-		 SET status=?, updated_at=?,
-		     suggestion_json=json_patch(suggestion_json, json_object('status', ?, 'confidence', ?, 'updated_at', ?))
+		 SET status=?, updated_at=?, suggestion_json=?
 		 WHERE suggestion_id=?`,
-		status, now, status, confidence, now.Format(time.RFC3339), suggestionID,
+		status, now, string(data), suggestionID,
 	)
 	return err
 }

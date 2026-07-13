@@ -57,6 +57,8 @@ func CurateTopicContext(ctx context.Context, topic *model.TopicContext, feedback
 		MissingContext      string                        `json:"missing_context,omitempty"`
 		WhatWentWrong       string                        `json:"what_went_wrong,omitempty"`
 		WhatCouldBeImproved string                        `json:"what_could_be_improved,omitempty"`
+		AdviceEvaluation    *model.AdviceEvaluation       `json:"advice_evaluation,omitempty"`
+		CandidateRule       *model.CandidateRule          `json:"candidate_rule,omitempty"`
 		Classification      *model.FeedbackClassification `json:"classification,omitempty"`
 	}
 
@@ -72,6 +74,8 @@ func CurateTopicContext(ctx context.Context, topic *model.TopicContext, feedback
 			MissingContext:      fb.MissingContext,
 			WhatWentWrong:       fb.WhatWentWrong,
 			WhatCouldBeImproved: fb.WhatCouldBeImproved,
+			AdviceEvaluation:    fb.AdviceEvaluation,
+			CandidateRule:       fb.CandidateRule,
 			Classification:      fb.Classification,
 		}
 	}

@@ -125,7 +125,7 @@ func TestRunStopHookRespectsStopHookActive(t *testing.T) {
 	}
 }
 
-func TestRunStopHookNoopWhenToolNeverCalled(t *testing.T) {
+func TestRunStopHookRequestsFeedbackWhenToolNeverCalled(t *testing.T) {
 	repo := setupHookTestRepo(t)
 
 	promptPayload := `{"session_id":"sess-1","prompt":"fix the login bug","cwd":"` + repo + `"}`
@@ -134,18 +134,19 @@ func TestRunStopHookNoopWhenToolNeverCalled(t *testing.T) {
 		t.Fatalf("RunPromptHook: %v", err)
 	}
 
-	// no repoguide tool was ever called this session; Stop must not demand feedback
+	// No RepoGuide tool was called, but the completed repository session can
+	// still contribute file feedback and a candidate rule.
 	stopPayload := `{"session_id":"sess-1","cwd":"` + repo + `"}`
 	var out bytes.Buffer
 	if err := RunStopHook(strings.NewReader(stopPayload), &out, repo); err != nil {
 		t.Fatalf("RunStopHook: %v", err)
 	}
-	if out.String() != "" {
-		t.Fatalf("expected no feedback request when no RepoGuide tool was called, got %q", out.String())
+	if !strings.Contains(out.String(), "repoguide_record_feedback") {
+		t.Fatalf("expected feedback request even when no RepoGuide tool was called, got %q", out.String())
 	}
 }
 
-func TestRunStopHookNoopWhenToolUsedBeforeThisSession(t *testing.T) {
+func TestRunStopHookIgnoresStaleToolMarkerAndRequestsFeedback(t *testing.T) {
 	repo := setupHookTestRepo(t)
 
 	// tool-used marker left over from an earlier session in the same repo
@@ -167,8 +168,8 @@ func TestRunStopHookNoopWhenToolUsedBeforeThisSession(t *testing.T) {
 	if err := RunStopHook(strings.NewReader(stopPayload), &out, repo); err != nil {
 		t.Fatalf("RunStopHook: %v", err)
 	}
-	if out.String() != "" {
-		t.Fatalf("expected no feedback request for a stale tool-used marker, got %q", out.String())
+	if !strings.Contains(out.String(), "repoguide_record_feedback") {
+		t.Fatalf("expected feedback request independent of stale tool marker, got %q", out.String())
 	}
 }
 

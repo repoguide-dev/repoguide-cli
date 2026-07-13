@@ -49,3 +49,19 @@ func TestUnderstandTaskResponseExplainsStandaloneWorkflow(t *testing.T) {
 		}
 	}
 }
+
+func TestAgentFeedbackInstructionRequestsTopicFilesAndCandidateRule(t *testing.T) {
+	instr := AgentFeedbackInstructionFor("test-repo-id")
+	for _, want := range []string{
+		"selected topic",
+		"useful, incorrect, unnecessary, or missing",
+		"specific repository files",
+		"exactly one reusable repository rule",
+		"file anchors",
+		"stored as a candidate",
+	} {
+		if !strings.Contains(instr, want) {
+			t.Fatalf("expected feedback instruction to contain %q", want)
+		}
+	}
+}

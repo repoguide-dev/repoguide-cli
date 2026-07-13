@@ -1295,6 +1295,8 @@ func (c CloudClient) localRecordMCPFeedback(repoID string, req MCPFeedbackReques
 		MissingContext:      req.MissingContext,
 		WhatWentWrong:       req.WhatWentWrong,
 		WhatCouldBeImproved: req.WhatCouldBeImproved,
+		AdviceEvaluation:    req.AdviceEvaluation,
+		CandidateRule:       req.CandidateRule,
 		MCPCallID:           req.MCPCallID,
 		TopicID:             req.TopicID,
 	}

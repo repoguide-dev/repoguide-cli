@@ -68,7 +68,7 @@ type SuggestionStore interface {
 	Save(ctx context.Context, repoID string, suggestions []model.TopicPatchSuggestion) error
 	ListPending(ctx context.Context, repoID, topicID string) ([]model.TopicPatchSuggestion, error)
 	GetByID(ctx context.Context, suggestionID string) (*model.TopicPatchSuggestion, error)
-	UpdateStatus(ctx context.Context, suggestionID, status string, confidence int) error
+	UpdateStatus(ctx context.Context, suggestionID, status string, confidence int, evidenceFeedbackIDs []string) error
 }
 
 type JobStore interface {

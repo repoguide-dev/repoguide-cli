@@ -14,6 +14,7 @@ import (
 
 	"github.com/repoguide/repoguide-cli/internal/services"
 	contracts "github.com/repoguide/repoguide-core/contracts/v1"
+	"github.com/repoguide/repoguide-core/model"
 )
 
 const mcpProtocolVersion = "2024-11-05"
@@ -73,15 +74,17 @@ type repoguideUnderstandTaskInput struct {
 }
 
 type repoguideRecordFeedbackInput struct {
-	RepoID              string   `json:"repo_id"`
-	Task                string   `json:"task"`
-	Stars               int      `json:"stars"`
-	Helpfulness         string   `json:"helpfulness"`
-	HelpedWith          []string `json:"helped_with"`
-	Quote               string   `json:"quote"`
-	MissingContext      string   `json:"missing_context"`
-	WhatWentWrong       string   `json:"what_went_wrong"`
-	WhatCouldBeImproved string   `json:"what_could_be_improved"`
+	RepoID              string                  `json:"repo_id"`
+	Task                string                  `json:"task"`
+	Stars               int                     `json:"stars"`
+	Helpfulness         string                  `json:"helpfulness"`
+	HelpedWith          []string                `json:"helped_with"`
+	Quote               string                  `json:"quote"`
+	MissingContext      string                  `json:"missing_context"`
+	WhatWentWrong       string                  `json:"what_went_wrong"`
+	WhatCouldBeImproved string                  `json:"what_could_be_improved"`
+	AdviceEvaluation    *model.AdviceEvaluation `json:"advice_evaluation"`
+	CandidateRule       *model.CandidateRule    `json:"candidate_rule"`
 }
 
 type repoguideTopic struct {
@@ -317,7 +320,7 @@ func handleMCPRequest(req mcpRequest, client *CloudClient) (mcpResponse, bool) {
 				},
 				{
 					Name:        "repoguide_record_feedback",
-					Description: "Record feedback about whether RepoGuide context helped this session. Call before ending a non-trivial session where RepoGuide was used.",
+					Description: "Record end-of-task training feedback: evaluate topic advice and specific files, then propose one structured candidate repository rule. Call before ending every non-trivial repository task, even if RepoGuide guidance was skipped or unavailable.",
 					InputSchema: map[string]any{
 						"type": "object",
 						"properties": map[string]any{
@@ -330,8 +333,22 @@ func handleMCPRequest(req mcpRequest, client *CloudClient) (mcpResponse, bool) {
 							"missing_context":        map[string]any{"type": "string"},
 							"what_went_wrong":        map[string]any{"type": "string"},
 							"what_could_be_improved": map[string]any{"type": "string"},
+							"advice_evaluation": map[string]any{
+								"type": "object",
+								"properties": map[string]any{
+									"useful_advice":      map[string]any{"type": "string"},
+									"incorrect_advice":   map[string]any{"type": "string"},
+									"unnecessary_advice": map[string]any{"type": "string"},
+									"missing_advice":     map[string]any{"type": "string"},
+									"useful_files":       map[string]any{"type": "array", "items": map[string]any{"type": "string"}},
+									"unhelpful_files":    map[string]any{"type": "array", "items": map[string]any{"type": "string"}},
+								},
+								"required":             []string{"useful_advice", "incorrect_advice", "unnecessary_advice", "missing_advice", "useful_files", "unhelpful_files"},
+								"additionalProperties": false,
+							},
+							"candidate_rule": candidateRuleInputSchema(),
 						},
-						"required":             []string{"repo_id", "stars"},
+						"required":             []string{"repo_id", "stars", "advice_evaluation", "candidate_rule"},
 						"additionalProperties": false,
 					},
 				},
@@ -581,6 +598,8 @@ func callMCPTool(name string, arguments map[string]any, client *CloudClient) (ma
 			MissingContext:      input.MissingContext,
 			WhatWentWrong:       input.WhatWentWrong,
 			WhatCouldBeImproved: input.WhatCouldBeImproved,
+			AdviceEvaluation:    input.AdviceEvaluation,
+			CandidateRule:       input.CandidateRule,
 			MCPCallID:           callID,
 			TopicID:             stringValue(recordInputs["topic_id"]),
 		}); err != nil {
@@ -589,6 +608,33 @@ func callMCPTool(name string, arguments map[string]any, client *CloudClient) (ma
 		return map[string]any{"text": "feedback recorded"}, callID, nil
 	default:
 		return nil, "", fmt.Errorf("unknown tool %q", name)
+	}
+}
+
+func candidateRuleInputSchema() map[string]any {
+	return map[string]any{
+		"type": "object",
+		"properties": map[string]any{
+			"rule":             map[string]any{"type": "string"},
+			"applies_when":     map[string]any{"type": "string"},
+			"evidence":         map[string]any{"type": "string"},
+			"exceptions":       map[string]any{"type": "string"},
+			"confidence":       map[string]any{"type": "integer", "minimum": 1, "maximum": 5},
+			"expected_benefit": map[string]any{"type": "string"},
+			"anchor_files":     map[string]any{"type": "array", "items": map[string]any{"type": "string"}},
+			"scope": map[string]any{
+				"type": "object",
+				"properties": map[string]any{
+					"symbols":       map[string]any{"type": "array", "items": map[string]any{"type": "string"}},
+					"directories":   map[string]any{"type": "array", "items": map[string]any{"type": "string"}},
+					"topic_ids":     map[string]any{"type": "array", "items": map[string]any{"type": "string"}},
+					"task_patterns": map[string]any{"type": "array", "items": map[string]any{"type": "string"}},
+				},
+				"additionalProperties": false,
+			},
+		},
+		"required":             []string{"rule", "applies_when", "evidence", "exceptions", "confidence", "expected_benefit", "anchor_files", "scope"},
+		"additionalProperties": false,
 	}
 }
 

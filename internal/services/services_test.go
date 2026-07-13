@@ -62,7 +62,7 @@ func (s *fakeSuggestionStore) ListPending(_ context.Context, _, _ string) ([]mod
 func (s *fakeSuggestionStore) GetByID(_ context.Context, _ string) (*model.TopicPatchSuggestion, error) {
 	return nil, nil
 }
-func (s *fakeSuggestionStore) UpdateStatus(_ context.Context, _, _ string, _ int) error {
+func (s *fakeSuggestionStore) UpdateStatus(_ context.Context, _, _ string, _ int, _ []string) error {
 	return nil
 }
 

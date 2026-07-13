@@ -11,7 +11,7 @@ import (
 
 // hintVersion is the version of the MCP instruction text embedded in the CLI.
 // Increment whenever AgentInstructionBriefFor or AgentInstructionFor changes.
-const hintVersion = 4
+const hintVersion = 5
 
 func hintVersionPath() string { return filepath.Join(RepoGuideDir(), "hints_version") }
 
@@ -83,7 +83,7 @@ func UnderstandTaskResponse(repoID string) string {
 		"- `repoguide_list_topics` when you need candidate topics\n" +
 		"- `repoguide_get_test_context` when you need deeper test strategy for a chosen topic\n" +
 		"- `repoguide_get_search_context` when you need reliable search queries for a chosen topic\n" +
-		"- `repoguide_record_feedback` before ending a session where RepoGuide helped\n\n" +
+		"- `repoguide_record_feedback` before ending every non-trivial repository task, including useful/unhelpful files and one candidate rule\n\n" +
 		"Checked-in `AGENTS.md` / `CLAUDE.md` instructions are optional accelerators. The MCP tool descriptions and responses are designed to stand on their own."
 }
 
@@ -370,9 +370,10 @@ func ClearMCPConfig() error {
 
 func agentFeedbackInstructionBody(repoID string) string {
 	return "## RepoGuide feedback\n\n" +
-		"**Always** call this after completing any non-trivial repository task where RepoGuide was used - specifically after committing changes or when the task is done:\n\n" +
-		"`repoguide_record_feedback({ \"repo_id\": \"" + repoID + "\", \"task\": \"<latest user request>\", \"stars\": 1-5, \"helpfulness\": \"none|low|medium|high\", \"helped_with\": [\"request_interpretation\",\"topic_routing\",\"file_discovery\",\"prior_decisions\",\"test_strategy\",\"avoided_wrong_path\"], \"quote\": \"One short sentence\", \"missing_context\": \"Optional\" })`\n\n" +
-		"This is how RepoGuide learns which context is useful. Report whether the context helped, what it helped with, and what was missing. Do not skip this step even if RepoGuide provided little help - that signal matters too.\n\n" +
+		"**Always** call this after completing any non-trivial repository task - specifically after committing changes or when the task is done. Do this even if RepoGuide guidance was skipped or unavailable; the session can still contribute a reusable rule:\n\n" +
+		"Evaluate the guidance for the selected topic: what advice was useful, incorrect, unnecessary, or missing. Name the specific repository files that were useful and the files that were irrelevant or misleading. Then propose exactly one reusable repository rule that would save the most time on a similar task. Structure the rule with when it applies, session evidence, exceptions, confidence (1-5), expected benefit, file anchors, and broader symbol/directory/topic/task-pattern scope. If no file was useful or unhelpful, use an empty list.\n\n" +
+		"Call `repoguide_record_feedback` with the existing quality fields plus `advice_evaluation` and `candidate_rule`. The proposed rule is stored as a candidate; it does not become guidance until later sessions, repository evidence, or developer feedback corroborate it.\n\n" +
+		"This is how RepoGuide learns which topic guidance and file anchors are useful. Do not skip this step even if RepoGuide provided little help - that signal matters too.\n\n" +
 		"**Call immediately** (before proceeding further) if: the topic was not found, the wrong topic was selected, or the context was not helpful at all. Use `stars: 1`, `helpfulness: \"none\"`, and describe what was missing in `missing_context`. Early feedback lets RepoGuide self-correct before wasting more context on the wrong path.\n"
 }
 
@@ -386,7 +387,7 @@ func AgentFeedbackInstructionFor(repoID string) string {
 // AgentFeedbackHookReasonFor returns the plain-text feedback instruction shown
 // by Claude Code's Stop hook.
 func AgentFeedbackHookReasonFor(repoID string) string {
-	return "Call `repoguide_record_feedback` before finishing this task."
+	return "Before finishing, call `repoguide_record_feedback`: evaluate the selected topic's advice, name useful and unhelpful files, and propose one structured reusable candidate rule."
 }
 
 // InjectFeedbackInstruction appends (or replaces) the feedback block in

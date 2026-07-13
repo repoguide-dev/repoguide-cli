@@ -19,6 +19,8 @@ Input fields:
 - helped_with
 - quote
 - missing_context
+- advice_evaluation: useful/incorrect/unnecessary/missing advice plus useful_files and unhelpful_files
+- candidate_rule: one structured proposed rule with applies_when, evidence, exceptions, confidence, expected_benefit, anchor_files, and broader scope
 - selected_topic_id, if available
 - selected_context_package_id, if available
 - selected_analysis_bundle_id, if available
@@ -32,6 +34,7 @@ patch_topic:
 Use when the selected/existing topic was basically the right topic, but its content needs a narrow improvement. This includes a missing file, useful file, stale hint, wrong topic-specific guidance, missing implementation detail, or misleading guidance that clearly belongs inside the selected/existing subsystem.
 
 Choose patch_topic only when the fix would improve the existing topic without changing the topic map.
+Choose patch_topic when a concrete candidate_rule is scoped to the selected topic, even if the rest of the feedback is positive. Useful and unhelpful file feedback is actionable topic evidence.
 
 patch_repo:
 Use when feedback reveals broad repo-wide guidance: terminology, developer request style, production/debugging expectation, architectural hard limit, global workflow expectation, or recurring cross-topic misinterpretation.
@@ -109,6 +112,8 @@ Rules:
 13. If feedback is negative but does not identify what was missing, wrong, stale, or unrelated, choose unclear or quality_only with neutral/unclear quality depending on specificity.
 14. Do not invent topic IDs, file names, context package IDs, analysis bundle IDs, session IDs, or facts not present in the input.
 15. File paths in actionable_items.files must come only from the feedback text or provided input fields.
+15a. Prefer advice_evaluation.useful_files and candidate_rule.anchor_files for useful_file items. Use advice_evaluation.unhelpful_files for wrong_context items when a file was misleading, or quality_signal when it was merely unnecessary.
+15b. Treat candidate_rule as a proposal requiring curation, not as already-valid guidance. Route it to patch_topic, patch_repo, or topic_candidate according to its scope.
 16. Keep actionable_items concise and evidence-backed. Do not include generic advice.
 17. Return strict JSON only.
 

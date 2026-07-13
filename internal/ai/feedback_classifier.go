@@ -14,14 +14,16 @@ const feedbackClassifierModel = "claude-haiku-4-5-20251001"
 // ClassifyFeedback calls Haiku to classify a feedback record and returns the classification and token usage.
 func ClassifyFeedback(ctx context.Context, fb *model.MCPFeedback) (*model.FeedbackClassification, Usage, error) {
 	input := map[string]any{
-		"feedback_id":     fb.FeedbackID,
-		"repo_id":         fb.RepoID,
-		"task":            fb.Task,
-		"stars":           fb.Stars,
-		"helpfulness":     fb.Helpfulness,
-		"helped_with":     fb.HelpedWith,
-		"quote":           fb.Quote,
-		"missing_context": fb.MissingContext,
+		"feedback_id":       fb.FeedbackID,
+		"repo_id":           fb.RepoID,
+		"task":              fb.Task,
+		"stars":             fb.Stars,
+		"helpfulness":       fb.Helpfulness,
+		"helped_with":       fb.HelpedWith,
+		"quote":             fb.Quote,
+		"missing_context":   fb.MissingContext,
+		"advice_evaluation": fb.AdviceEvaluation,
+		"candidate_rule":    fb.CandidateRule,
 	}
 	if fb.SessionID != "" {
 		input["session_id"] = fb.SessionID

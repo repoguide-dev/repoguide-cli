@@ -7,6 +7,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 
@@ -60,6 +61,17 @@ func TestHandleMCPRequestListsTools(t *testing.T) {
 	}
 	if required, ok := tools[0].InputSchema["required"]; ok && len(required.([]string)) > 0 {
 		t.Fatalf("expected repoguide_list_topics to allow empty arguments, got required=%v", required)
+	}
+	feedbackSchema := tools[4].InputSchema
+	required, _ := feedbackSchema["required"].([]string)
+	for _, want := range []string{"advice_evaluation", "candidate_rule"} {
+		if !slices.Contains(required, want) {
+			t.Fatalf("feedback schema required=%v, want %q", required, want)
+		}
+	}
+	properties := feedbackSchema["properties"].(map[string]any)
+	if _, ok := properties["candidate_rule"]; !ok {
+		t.Fatal("feedback schema must expose candidate_rule")
 	}
 }
 
