@@ -15,9 +15,12 @@ type Token struct {
 	Plan  string `json:"plan,omitempty"`
 }
 
+// dataDirName is overridden in the local development build.
+var dataDirName = ".repoguide"
+
 func tokenPath() string {
 	home, _ := os.UserHomeDir()
-	return filepath.Join(home, ".repoguide", "auth.json")
+	return filepath.Join(home, dataDirName, "auth.json")
 }
 
 func Load() (Token, bool) {

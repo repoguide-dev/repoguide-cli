@@ -9,7 +9,11 @@ import (
 	"strings"
 )
 
-const mcpServerName = "repoguide"
+// These identifiers are overridden by the local development build. Keeping
+// them distinct lets the local and released CLIs be installed side by side.
+var mcpServerName = "repoguide"
+var repoguideMarketplace = "repoguide"
+var mcpPluginName = "repoguide"
 
 type MCPClientResult struct {
 	Name       string
@@ -56,7 +60,7 @@ func allMCPClientDefs() []mcpClientDef {
 }
 
 func isClaudePluginConfigured() bool {
-	_, err := os.Stat(home(".claude", "skills", "repoguide", ".mcp.json"))
+	_, err := os.Stat(home(".claude", "skills", mcpPluginName, ".mcp.json"))
 	return err == nil
 }
 
@@ -66,7 +70,7 @@ func isCodexPluginConfigured() bool {
 	if err != nil {
 		return false
 	}
-	return strings.Contains(string(data), `"repoguide@`+repoguideMarketplace+`"`)
+	return strings.Contains(string(data), `"`+mcpPluginName+`@`+repoguideMarketplace+`"`)
 }
 
 func isCursorMCPConfigured() bool {
@@ -208,13 +212,13 @@ func InstallViaMCPAdd(cli, binPath string) error {
 // InstallClaudePlugin creates ~/.claude/skills/repoguide/ as a skills-dir plugin
 // with a .claude-plugin/plugin.json manifest and .mcp.json server config.
 func InstallClaudePlugin(binPath string) (string, error) {
-	dir := home(".claude", "skills", "repoguide")
+	dir := home(".claude", "skills", mcpPluginName)
 	if err := os.MkdirAll(filepath.Join(dir, ".claude-plugin"), 0o755); err != nil {
 		return dir, err
 	}
 	manifest := map[string]any{
 		"$schema":     "https://anthropic.com/claude-code/plugin.schema.json",
-		"name":        "repoguide",
+		"name":        mcpPluginName,
 		"version":     "1.0.2",
 		"description": "Repo-specific context routing. Calls repoguide_get_repo_experience once per task/session, not once per message.",
 		"author": map[string]any{
@@ -237,17 +241,16 @@ func InstallClaudePlugin(binPath string) (string, error) {
 }
 
 func uninstallClaudePlugin() error {
-	return os.RemoveAll(home(".claude", "skills", "repoguide"))
+	return os.RemoveAll(home(".claude", "skills", mcpPluginName))
 }
 
-const repoguideMarketplace = "repoguide"
 const legacyHindsightMarketplace = "hindsight"
 
 // installCodexPlugin writes a local marketplace at ~/.repoguide/codex-marketplace/,
 // registers it with codex, then installs the repoguide plugin from it.
 func installCodexPlugin(binPath string, installHooks bool) error {
-	marketDir := home(".repoguide", "codex-marketplace")
-	pluginDir := filepath.Join(marketDir, "plugins", "repoguide")
+	marketDir := filepath.Join(RepoGuideDir(), "codex-marketplace")
+	pluginDir := filepath.Join(marketDir, "plugins", mcpPluginName)
 
 	if err := os.MkdirAll(filepath.Join(marketDir, ".agents", "plugins"), 0o755); err != nil {
 		return err
@@ -284,7 +287,7 @@ func installCodexPlugin(binPath string, installHooks bool) error {
 	// Register marketplace (idempotent — ignore error if already present).
 	_ = exec.Command("codex", "plugin", "marketplace", "add", marketDir).Run()
 
-	cmd := exec.Command("codex", "plugin", "add", "repoguide@"+repoguideMarketplace)
+	cmd := exec.Command("codex", "plugin", "add", mcpPluginName+"@"+repoguideMarketplace)
 	out, err := cmd.CombinedOutput()
 	if err != nil {
 		return fmt.Errorf("%w: %s", err, out)
@@ -293,7 +296,7 @@ func installCodexPlugin(binPath string, installHooks bool) error {
 }
 
 func uninstallCodexPlugin() error {
-	_ = exec.Command("codex", "plugin", "remove", "repoguide@"+repoguideMarketplace).Run()
+	_ = exec.Command("codex", "plugin", "remove", mcpPluginName+"@"+repoguideMarketplace).Run()
 	removeLegacyCodexPlugin()
 	cmd := exec.Command("codex", "plugin", "marketplace", "remove", repoguideMarketplace)
 	if out, err := cmd.CombinedOutput(); err != nil {
@@ -309,10 +312,10 @@ func codexMarketplaceManifest() map[string]any {
 			"displayName": "RepoGuide",
 		},
 		"plugins": []map[string]any{{
-			"name": "repoguide",
+			"name": mcpPluginName,
 			"source": map[string]any{
 				"source": "local",
-				"path":   "./plugins/repoguide",
+				"path":   "./plugins/" + mcpPluginName,
 			},
 			"policy": map[string]any{
 				"installation":   "AVAILABLE",
@@ -326,7 +329,7 @@ func codexMarketplaceManifest() map[string]any {
 
 func codexPluginManifest() map[string]any {
 	return map[string]any{
-		"name":        "repoguide",
+		"name":        mcpPluginName,
 		"version":     "1.0.2",
 		"description": "Repo-specific context routing for Codex.",
 		"author": map[string]any{
@@ -663,7 +666,7 @@ func UninstallMCPClients() []MCPClientResult {
 
 	clients := []clientDef{
 		{"Claude Code", detectClaudeCodeMCP, func() error {
-			_ = os.RemoveAll(home(".claude", "skills", "repoguide"))
+			_ = os.RemoveAll(home(".claude", "skills", mcpPluginName))
 			_ = RemoveViaMCPRemove("claude") // also clean up any old mcp-add entry
 			return nil
 		}},

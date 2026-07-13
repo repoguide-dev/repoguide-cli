@@ -606,7 +606,7 @@ func refreshCachedSessionEntry(entry sessionIndexEntry, annotator *sessionAnnota
 func sessionIndexPath(agent, location string) string {
 	sum := sha1.Sum([]byte(location))
 	return filepath.Join(
-		home(".repoguide", "cache", "sessions"),
+		filepath.Join(RepoGuideDir(), "cache", "sessions"),
 		fmt.Sprintf("%s-%s.json", agent, hex.EncodeToString(sum[:])),
 	)
 }

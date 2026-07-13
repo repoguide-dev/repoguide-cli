@@ -1145,8 +1145,7 @@ func runMCPInstallApprove(noHooks bool) error {
 		repos = []string{cur}
 	}
 	if len(repos) == 0 {
-		fmt.Println("No initialized repos found. Run: repoguide repo init")
-		return nil
+		fmt.Println("No initialized repos found; installing the MCP client integration only.")
 	}
 
 	for _, repoPath := range repos {

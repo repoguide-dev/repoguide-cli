@@ -25,12 +25,31 @@ import (
 // ponytail: overridden via -ldflags in run-local.sh for local dev
 var defaultBackendURL = "https://repoguide.dev"
 
+// developmentBuild is set only by run-local.sh. It deliberately changes no
+// command-line behavior; it only identifies the local executable in help.
+var developmentBuild = ""
+
 const tokenRefreshLeadTime = 7 * 24 * time.Hour
 
 var root = &cobra.Command{
 	Use:     "repoguide",
 	Aliases: []string{"rgd"},
-	Short:   "Replay and learn from your AI coding sessions",
+	Short:   rootShortDescription(),
+	Long:    rootLongDescription(),
+}
+
+func rootShortDescription() string {
+	if developmentBuild != "" {
+		return "Local development build of RepoGuide"
+	}
+	return "Replay and learn from your AI coding sessions"
+}
+
+func rootLongDescription() string {
+	if developmentBuild != "" {
+		return "Local development build of RepoGuide. It uses local development services and separate local state."
+	}
+	return "Replay and learn from your AI coding sessions"
 }
 
 func Execute() {

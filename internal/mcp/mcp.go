@@ -13,7 +13,7 @@ import (
 // Increment whenever AgentInstructionBriefFor or AgentInstructionFor changes.
 const hintVersion = 4
 
-func hintVersionPath() string { return home(".repoguide", "hints_version") }
+func hintVersionPath() string { return filepath.Join(RepoGuideDir(), "hints_version") }
 
 func loadHintVersion() int {
 	data, err := os.ReadFile(hintVersionPath())
@@ -127,7 +127,7 @@ type MCPConfig struct {
 }
 
 func mcpConfigPath() string {
-	return home(".repoguide", "mcp.json")
+	return filepath.Join(RepoGuideDir(), "mcp.json")
 }
 
 func LoadMCPConfig() (MCPConfig, error) {

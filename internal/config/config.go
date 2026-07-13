@@ -1,4 +1,4 @@
-// Package config manages the RepoGuide global config file at ~/.repoguide/config.json.
+// Package config manages the RepoGuide global config file.
 package config
 
 import (
@@ -12,9 +12,12 @@ type Config struct {
 	UseClaudeCLI    bool   `json:"use_claude_cli,omitempty"`
 }
 
+// dataDirName is overridden in the local development build.
+var dataDirName = ".repoguide"
+
 func configPath() string {
 	home, _ := os.UserHomeDir()
-	return filepath.Join(home, ".repoguide", "config.json")
+	return filepath.Join(home, dataDirName, "config.json")
 }
 
 func load() Config {
@@ -47,7 +50,7 @@ func AnthropicAPIKey() string {
 	return load().AnthropicAPIKey
 }
 
-// SetAnthropicAPIKey writes the key to ~/.repoguide/config.json.
+// SetAnthropicAPIKey writes the key to the global config file.
 func SetAnthropicAPIKey(key string) error {
 	c := load()
 	c.AnthropicAPIKey = key
@@ -59,7 +62,7 @@ func UseClaudeCLI() bool {
 	return load().UseClaudeCLI
 }
 
-// SetUseClaudeCLI saves the claude CLI preference to ~/.repoguide/config.json.
+// SetUseClaudeCLI saves the claude CLI preference to the global config file.
 func SetUseClaudeCLI(v bool) error {
 	c := load()
 	c.UseClaudeCLI = v

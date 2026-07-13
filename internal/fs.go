@@ -14,6 +14,10 @@ func glob(pattern string) []string {
 
 var repoGuideDirOverride string
 
+// dataDirName is overridden in local development builds so their database,
+// credentials, and MCP state never collide with the released CLI.
+var dataDirName = ".repoguide"
+
 // SetRepoGuideDirOverride redirects RepoGuideDir() to dir for the rest of
 // the process. Used by `report` to run against an ephemeral temp store
 // instead of the user's real ~/.repoguide when the repo was never
@@ -24,7 +28,7 @@ func RepoGuideDir() string {
 	if repoGuideDirOverride != "" {
 		return repoGuideDirOverride
 	}
-	return home(".repoguide")
+	return home(dataDirName)
 }
 
 // RepoGuideDBPath returns the path to the local SQLite database.
