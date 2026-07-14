@@ -4,16 +4,18 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"log/slog"
 	"path/filepath"
 	"sort"
 	"strings"
+	"time"
 
 	"github.com/repoguide/repoguide-cli/internal/ai/prompts"
 	"github.com/repoguide/repoguide-core/contracts/v1"
 	"github.com/repoguide/repoguide-core/model"
 )
 
-const maxCandidateSourcesPerCall = 100
+const maxCandidateSourcesPerCall = 50
 
 type candidateSourceInput struct {
 	ID           string   `json:"id"`
@@ -26,16 +28,38 @@ type candidateSourceInput struct {
 }
 
 type candidateGroup struct {
-	CandidateID string   `json:"candidate_id"`
-	SourceIDs   []string `json:"source_ids"`
-	Reason      string   `json:"reason"`
+	CandidateID     string   `json:"candidate_id"`
+	ExistingTopicID string   `json:"existing_topic_id,omitempty"`
+	SourceIDs       []string `json:"source_ids"`
+	Reason          string   `json:"reason"`
+}
+
+type candidateAssignment struct {
+	TopicID   string   `json:"topic_id"`
+	SourceIDs []string `json:"source_ids"`
+}
+
+type candidateSplit struct {
+	TopicID string     `json:"topic_id"`
+	Groups  [][]string `json:"groups"`
 }
 
 type candidateDiscoveryResponse struct {
-	Candidates          []candidateGroup `json:"candidates"`
-	UnassignedSourceIDs []string         `json:"unassigned_source_ids"`
-	Groups              [][]string       `json:"groups"`
-	Unassigned          []string         `json:"unassigned"`
+	Candidates          []candidateGroup      `json:"candidates"`
+	UnassignedSourceIDs []string              `json:"unassigned_source_ids"`
+	Groups              [][]string            `json:"groups"`
+	Assignments         []candidateAssignment `json:"assign"`
+	NewGroups           [][]string            `json:"new"`
+	Splits              []candidateSplit      `json:"split"`
+	Unassigned          []string              `json:"unassigned"`
+}
+
+type candidateConsolidationInput struct {
+	CandidateID           string   `json:"candidate_id"`
+	ExistingTopicID       string   `json:"existing_topic_id,omitempty"`
+	SourceCount           int      `json:"source_count"`
+	RepresentativePrompts []string `json:"representative_prompts,omitempty"`
+	TopEditedFiles        []string `json:"top_edited_files,omitempty"`
 }
 
 func discoverTopicCandidates(ctx context.Context, bundle contracts.RepoAnalysisBundle, existing []model.TopicContext) ([]topicCandidate, Usage, error) {
@@ -60,9 +84,7 @@ func discoverTopicCandidates(ctx context.Context, bundle contracts.RepoAnalysisB
 		input := candidateSourceInput{
 			ID: source.ID, SourceType: source.SourceType, AuthorID: source.AuthorID,
 			Title: source.Title, Prompts: firstStrings(source.Prompts, promptsPerSession), Timestamp: source.Timestamp,
-		}
-		if source.SourceType != "session" {
-			input.ChangedFiles = firstStrings(source.ChangedFiles, 30)
+			ChangedFiles: firstStrings(source.ChangedFiles, 20),
 		}
 		inputs = append(inputs, input)
 	}
@@ -73,46 +95,31 @@ func discoverTopicCandidates(ctx context.Context, bundle contracts.RepoAnalysisB
 			"edit_targets": topic.ImportantFiles.EditTargets,
 		})
 	}
-	existingJSON, _ := json.Marshal(existingSummaries)
-	type batchResult struct {
-		index    int
-		response candidateDiscoveryResponse
-		usage    Usage
-		err      error
-	}
 	batches := candidateInputBatches(inputs, maxCandidateSourcesPerCall)
-	results := make(chan batchResult, len(batches))
-	for index, batch := range batches {
-		go func() {
-			sourcesJSON, _ := json.Marshal(batch)
-			raw, batchUsage, err := callClaudeMaxTokens(ctx, topicModel, prompts.BuildTopicCandidatePrompt(string(sourcesJSON), string(existingJSON)), 8192)
-			if err != nil {
-				results <- batchResult{index: index, usage: batchUsage, err: err}
-				return
-			}
-			response, parseErr := parseCandidateDiscoveryResponse(raw)
-			if parseErr != nil {
-				parseErr = fmt.Errorf("topic candidate discovery batch %d/%d: parse response (%d chars, %d output tokens): %w", index+1, len(batches), len(raw), batchUsage.OutputTokens, parseErr)
-			}
-			results <- batchResult{index: index, response: response, usage: batchUsage, err: parseErr}
-		}()
-	}
-	ordered := make([]batchResult, len(batches))
+	var groups []candidateGroup
+	var loose []string
 	var usage Usage
-	for range batches {
-		result := <-results
-		ordered[result.index] = result
-		usage = mergeUsage(usage, result.usage)
-	}
-	var response candidateDiscoveryResponse
-	for _, result := range ordered {
-		if result.err != nil {
-			return nil, usage, result.err
+	for index, batch := range batches {
+		turnExisting := append([]map[string]any(nil), existingSummaries...)
+		turnExisting = append(turnExisting, candidateScopeSummaries(groups, sources)...)
+		existingJSON, _ := json.Marshal(turnExisting)
+		sourcesJSON, _ := json.Marshal(batch)
+		started := time.Now()
+		slog.Info("topic candidate turn started", "batch", index+1, "batches", len(batches), "sources", len(batch), "existing_topics", len(turnExisting))
+		raw, batchUsage, err := callClaudeMaxTokens(ctx, topicModel, prompts.BuildTopicCandidatePrompt(string(sourcesJSON), string(existingJSON)), 8192)
+		usage = mergeUsage(usage, batchUsage)
+		if err != nil {
+			slog.Error("topic candidate turn failed", "batch", index+1, "batches", len(batches), "sources", len(batch), "duration_ms", time.Since(started).Milliseconds(), "err", err)
+			return nil, usage, err
 		}
-		response.Candidates = append(response.Candidates, result.response.Candidates...)
-		response.UnassignedSourceIDs = append(response.UnassignedSourceIDs, result.response.UnassignedSourceIDs...)
+		response, parseErr := parseCandidateDiscoveryResponse(raw)
+		if parseErr != nil {
+			return nil, usage, fmt.Errorf("topic candidate discovery batch %d/%d: parse response (%d chars, %d output tokens): %w", index+1, len(batches), len(raw), batchUsage.OutputTokens, parseErr)
+		}
+		groups, loose = applyCandidateTurn(index, batch, response, groups, loose, sources)
+		slog.Info("topic candidate turn completed", "batch", index+1, "batches", len(batches), "sources", len(batch), "candidate_scopes", len(groups), "unassigned_total", len(loose), "input_tokens", batchUsage.InputTokens, "output_tokens", batchUsage.OutputTokens, "duration_ms", time.Since(started).Milliseconds())
 	}
-	groups := normalizeCandidateGroups(response, sources)
+	groups = normalizeCandidateGroups(candidateDiscoveryResponse{Candidates: groups, UnassignedSourceIDs: loose}, sources)
 	candidates := make([]topicCandidate, 0, len(groups))
 	for _, group := range groups {
 		if candidate, ok := buildCandidateFromSources(group, sources, bundle); ok {
@@ -120,6 +127,84 @@ func discoverTopicCandidates(ctx context.Context, bundle contracts.RepoAnalysisB
 		}
 	}
 	return filterAndRank(candidates), usage, nil
+}
+
+func consolidateCandidateGroups(ctx context.Context, groups []candidateGroup, sources map[string]contracts.RepoAnalysisSource) ([]candidateGroup, Usage, error) {
+	if len(groups) < 2 {
+		return groups, Usage{}, nil
+	}
+	inputs := make([]candidateConsolidationInput, 0, len(groups))
+	for _, group := range groups {
+		promptSet := map[string]struct{}{}
+		fileCounts := map[string]int{}
+		var representativePrompts []string
+		for _, sourceID := range group.SourceIDs {
+			source := sources[sourceID]
+			for _, prompt := range firstStrings(source.Prompts, promptsPerSession) {
+				prompt = strings.TrimSpace(prompt)
+				if prompt == "" {
+					continue
+				}
+				if _, ok := promptSet[prompt]; !ok && len(representativePrompts) < 8 {
+					promptSet[prompt] = struct{}{}
+					representativePrompts = append(representativePrompts, prompt)
+				}
+			}
+			for _, path := range dedupeStrings(source.ChangedFiles) {
+				fileCounts[path]++
+			}
+		}
+		inputs = append(inputs, candidateConsolidationInput{CandidateID: group.CandidateID, ExistingTopicID: group.ExistingTopicID, SourceCount: len(group.SourceIDs), RepresentativePrompts: representativePrompts, TopEditedFiles: rankedPaths(fileCounts, 12)})
+	}
+	payload, _ := json.Marshal(inputs)
+	started := time.Now()
+	slog.Info("topic candidate consolidation turn started", "candidates", len(groups))
+	raw, usage, err := callClaudeMaxTokens(ctx, topicModel, prompts.BuildTopicCandidateConsolidationPrompt(string(payload)), 4096)
+	if err != nil {
+		slog.Error("topic candidate consolidation turn failed", "candidates", len(groups), "duration_ms", time.Since(started).Milliseconds(), "err", err)
+		return nil, usage, err
+	}
+	response, parseErr := parseCandidateDiscoveryResponse(raw)
+	if parseErr != nil {
+		return nil, usage, fmt.Errorf("topic candidate consolidation: parse response: %w", parseErr)
+	}
+	byID := make(map[string]candidateGroup, len(groups))
+	for _, group := range groups {
+		byID[group.CandidateID] = group
+	}
+	used := map[string]struct{}{}
+	consolidated := make([]candidateGroup, 0, len(groups))
+	for _, mergeIDs := range response.Groups {
+		var merged candidateGroup
+		for _, id := range mergeIDs {
+			group, ok := byID[id]
+			if !ok {
+				continue
+			}
+			if _, ok := used[id]; ok {
+				continue
+			}
+			used[id] = struct{}{}
+			if merged.CandidateID == "" {
+				merged = group
+			} else {
+				merged.SourceIDs = dedupeStrings(append(merged.SourceIDs, group.SourceIDs...))
+				if merged.ExistingTopicID == "" {
+					merged.ExistingTopicID = group.ExistingTopicID
+				}
+			}
+		}
+		if merged.CandidateID != "" {
+			consolidated = append(consolidated, merged)
+		}
+	}
+	for _, group := range groups {
+		if _, ok := used[group.CandidateID]; !ok {
+			consolidated = append(consolidated, group)
+		}
+	}
+	slog.Info("topic candidate consolidation turn completed", "candidates_before", len(groups), "candidates_after", len(consolidated), "input_tokens", usage.InputTokens, "output_tokens", usage.OutputTokens, "duration_ms", time.Since(started).Milliseconds())
+	return consolidated, usage, nil
 }
 
 func candidateInputBatches(inputs []candidateSourceInput, limit int) [][]candidateSourceInput {
@@ -137,8 +222,95 @@ func candidateInputBatches(inputs []candidateSourceInput, limit int) [][]candida
 	return batches
 }
 
+func candidateScopeSummaries(groups []candidateGroup, sources map[string]contracts.RepoAnalysisSource) []map[string]any {
+	out := make([]map[string]any, 0, len(groups))
+	for _, group := range groups {
+		fileCounts := map[string]int{}
+		var representativePrompts []string
+		for _, sourceID := range group.SourceIDs {
+			source := sources[sourceID]
+			if len(representativePrompts) < 6 {
+				representativePrompts = append(representativePrompts, firstStrings(source.Prompts, min(promptsPerSession, 6-len(representativePrompts)))...)
+			}
+			for _, path := range dedupeStrings(source.ChangedFiles) {
+				fileCounts[path]++
+			}
+		}
+		out = append(out, map[string]any{"id": group.CandidateID, "candidate": true, "source_count": len(group.SourceIDs), "representative_prompts": representativePrompts, "edit_targets": rankedPaths(fileCounts, 12)})
+	}
+	return out
+}
+
+func applyCandidateTurn(batchIndex int, batch []candidateSourceInput, response candidateDiscoveryResponse, groups []candidateGroup, loose []string, sources map[string]contracts.RepoAnalysisSource) ([]candidateGroup, []string) {
+	batchIDs := map[string]struct{}{}
+	for _, source := range batch {
+		batchIDs[source.ID] = struct{}{}
+	}
+	used := map[string]struct{}{}
+	validIDs := func(ids []string) []string {
+		var out []string
+		for _, id := range ids {
+			if _, ok := batchIDs[id]; !ok {
+				continue
+			}
+			if _, ok := used[id]; ok {
+				continue
+			}
+			used[id] = struct{}{}
+			out = append(out, id)
+		}
+		return out
+	}
+	groupIndex := map[string]int{}
+	for index, group := range groups {
+		groupIndex[group.CandidateID] = index
+		if group.ExistingTopicID != "" {
+			groupIndex[group.ExistingTopicID] = index
+		}
+	}
+	for _, assignment := range response.Assignments {
+		ids := validIDs(assignment.SourceIDs)
+		if len(ids) == 0 {
+			continue
+		}
+		if index, ok := groupIndex[assignment.TopicID]; ok {
+			groups[index].SourceIDs = dedupeStrings(append(groups[index].SourceIDs, ids...))
+			continue
+		}
+		groups = append(groups, candidateGroup{CandidateID: "existing_" + assignment.TopicID, ExistingTopicID: assignment.TopicID, SourceIDs: ids})
+		groupIndex[assignment.TopicID] = len(groups) - 1
+	}
+	newGroups := append([][]string(nil), response.NewGroups...)
+	newGroups = append(newGroups, response.Groups...)
+	for groupNumber, ids := range newGroups {
+		ids = validIDs(ids)
+		if len(ids) >= 2 {
+			groups = append(groups, candidateGroup{CandidateID: fmt.Sprintf("candidate_%d_%d", batchIndex+1, groupNumber+1), SourceIDs: ids})
+		} else {
+			loose = append(loose, ids...)
+		}
+	}
+	for splitNumber, split := range response.Splits {
+		for groupNumber, ids := range split.Groups {
+			ids = validIDs(ids)
+			if len(ids) >= 2 {
+				groups = append(groups, candidateGroup{CandidateID: fmt.Sprintf("split_%d_%d_%d", batchIndex+1, splitNumber+1, groupNumber+1), SourceIDs: ids})
+			} else {
+				loose = append(loose, ids...)
+			}
+		}
+	}
+	loose = append(loose, response.UnassignedSourceIDs...)
+	for id := range batchIDs {
+		if _, ok := used[id]; !ok {
+			loose = append(loose, id)
+		}
+	}
+	return groups, dedupeStrings(loose)
+}
+
 func parseCandidateDiscoveryResponse(raw string) (candidateDiscoveryResponse, error) {
-	clean := strings.TrimSpace(stripFences(raw))
+	clean := strings.TrimSpace(extractJSON(raw))
 	var response candidateDiscoveryResponse
 	if err := json.Unmarshal([]byte(clean), &response); err != nil {
 		response.Groups = recoverCompactCandidateGroups(clean)
@@ -148,6 +320,17 @@ func parseCandidateDiscoveryResponse(raw string) (candidateDiscoveryResponse, er
 	}
 	for i, ids := range response.Groups {
 		response.Candidates = append(response.Candidates, candidateGroup{CandidateID: fmt.Sprintf("candidate_%d", i+1), SourceIDs: ids})
+	}
+	for i, ids := range response.NewGroups {
+		response.Candidates = append(response.Candidates, candidateGroup{CandidateID: fmt.Sprintf("new_%d", i+1), SourceIDs: ids})
+	}
+	for _, assignment := range response.Assignments {
+		response.Candidates = append(response.Candidates, candidateGroup{CandidateID: "existing_" + assignment.TopicID, ExistingTopicID: assignment.TopicID, SourceIDs: assignment.SourceIDs})
+	}
+	for splitIndex, split := range response.Splits {
+		for groupIndex, ids := range split.Groups {
+			response.Candidates = append(response.Candidates, candidateGroup{CandidateID: fmt.Sprintf("split_%s_%d_%d", split.TopicID, splitIndex+1, groupIndex+1), SourceIDs: ids})
+		}
 	}
 	response.UnassignedSourceIDs = append(response.UnassignedSourceIDs, response.Unassigned...)
 	return response, nil
@@ -246,7 +429,7 @@ func normalizeCandidateGroups(response candidateDiscoveryResponse, sources map[s
 			used[id] = struct{}{}
 			ids = append(ids, id)
 		}
-		if len(ids) < 2 {
+		if len(ids) < 2 && group.ExistingTopicID == "" {
 			loose = append(loose, ids...)
 			continue
 		}
@@ -256,6 +439,7 @@ func normalizeCandidateGroups(response candidateDiscoveryResponse, sources map[s
 		group.SourceIDs = ids
 		groups = append(groups, group)
 	}
+	groups = mergeExistingCandidateGroups(groups)
 	for id := range sources {
 		if _, ok := used[id]; !ok {
 			loose = append(loose, id)
@@ -289,6 +473,24 @@ func normalizeCandidateGroups(response candidateDiscoveryResponse, sources map[s
 		groups[i].CandidateID = base
 	}
 	return groups
+}
+
+func mergeExistingCandidateGroups(groups []candidateGroup) []candidateGroup {
+	indexes := map[string]int{}
+	out := make([]candidateGroup, 0, len(groups))
+	for _, group := range groups {
+		if group.ExistingTopicID == "" {
+			out = append(out, group)
+			continue
+		}
+		if index, ok := indexes[group.ExistingTopicID]; ok {
+			out[index].SourceIDs = dedupeStrings(append(out[index].SourceIDs, group.SourceIDs...))
+			continue
+		}
+		indexes[group.ExistingTopicID] = len(out)
+		out = append(out, group)
+	}
+	return out
 }
 
 func mergeOverlappingCandidateGroups(groups []candidateGroup, sources map[string]contracts.RepoAnalysisSource) []candidateGroup {
@@ -353,7 +555,7 @@ func sourceFileOverlap(source contracts.RepoAnalysisSource, group candidateGroup
 }
 
 func buildCandidateFromSources(group candidateGroup, sources map[string]contracts.RepoAnalysisSource, bundle contracts.RepoAnalysisBundle) (topicCandidate, bool) {
-	if len(group.SourceIDs) < 2 {
+	if len(group.SourceIDs) < 2 && group.ExistingTopicID == "" {
 		return topicCandidate{}, false
 	}
 	fileInfo := make(map[string]contracts.RepoAnalysisFile, len(bundle.Files))
@@ -365,6 +567,7 @@ func buildCandidateFromSources(group candidateGroup, sources map[string]contract
 	seenPrompts := map[string]struct{}{}
 	var candidate topicCandidate
 	candidate.candidateID = group.CandidateID
+	candidate.existingTopicID = group.ExistingTopicID
 	candidate.sourceIDs = append([]string(nil), group.SourceIDs...)
 	candidate.fileClassifications = map[string][]string{}
 	commandSessions := map[string][]contracts.RepoAnalysisCommand{}

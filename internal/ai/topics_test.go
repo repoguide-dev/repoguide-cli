@@ -301,9 +301,54 @@ func TestParseCandidateDiscoveryResponseRecoversCompleteGroupsFromTruncation(t *
 	}
 }
 
+func TestParseCandidateDiscoveryResponseIgnoresTrailingFence(t *testing.T) {
+	response, err := parseCandidateDiscoveryResponse("{\"new\":[[\"s1\",\"s2\"]],\"unassigned\":[]}\n```")
+	if err != nil || len(response.Candidates) != 1 {
+		t.Fatalf("response=%#v err=%v", response, err)
+	}
+}
+
+func TestApplyCandidateTurnCarriesScopeIntoNextBatch(t *testing.T) {
+	groups, loose := applyCandidateTurn(0, []candidateSourceInput{{ID: "s1"}, {ID: "s2"}}, candidateDiscoveryResponse{NewGroups: [][]string{{"s1", "s2"}}}, nil, nil, nil)
+	if len(groups) != 1 || len(loose) != 0 {
+		t.Fatalf("first turn groups=%#v loose=%#v", groups, loose)
+	}
+	groups, loose = applyCandidateTurn(1, []candidateSourceInput{{ID: "s3"}}, candidateDiscoveryResponse{Assignments: []candidateAssignment{{TopicID: groups[0].CandidateID, SourceIDs: []string{"s3"}}}}, groups, loose, nil)
+	if len(groups) != 1 || len(groups[0].SourceIDs) != 3 || len(loose) != 0 {
+		t.Fatalf("second turn groups=%#v loose=%#v", groups, loose)
+	}
+}
+
+func TestParseCandidateDiscoveryResponseSupportsAssignNewAndSplit(t *testing.T) {
+	response, err := parseCandidateDiscoveryResponse(`{"assign":[{"topic_id":"auth","source_ids":["s1"]}],"new":[["s2","s3"]],"split":[{"topic_id":"web","groups":[["s4","s5"],["s6","s7"]]}],"unassigned":["s8"]}`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	foundExisting := false
+	for _, candidate := range response.Candidates {
+		foundExisting = foundExisting || candidate.ExistingTopicID == "auth"
+	}
+	if len(response.Candidates) != 4 || !foundExisting {
+		t.Fatalf("candidates = %#v", response.Candidates)
+	}
+	if len(response.UnassignedSourceIDs) != 1 || response.UnassignedSourceIDs[0] != "s8" {
+		t.Fatalf("unassigned = %#v", response.UnassignedSourceIDs)
+	}
+}
+
+func TestCompactTopicRepoContextIncludesSummaryAndBoundsDocs(t *testing.T) {
+	context := compactTopicRepoContext(contracts.RepoAnalysisBundle{Repo: contracts.RepoAnalysisRepo{Name: "repoguide"}}, map[string]string{"README.md": strings.Repeat("x", 4000)})
+	if !strings.Contains(context, "Repository: repoguide") || !strings.Contains(context, "Telemetry summary:") {
+		t.Fatalf("context missing repo summary: %q", context)
+	}
+	if len(context) > 3000 {
+		t.Fatalf("context too large: %d", len(context))
+	}
+}
+
 func TestTopicCandidatePromptUsesCompactOutput(t *testing.T) {
 	prompt := prompts.BuildTopicCandidatePrompt(`[]`, `[]`)
-	if !strings.Contains(prompt, `"groups":[["source-id-1"`) || !strings.Contains(prompt, "Do not include reasons") {
+	if !strings.Contains(prompt, `"assign":[{"topic_id"`) || !strings.Contains(prompt, `"new":[["source-id-2"`) || !strings.Contains(prompt, `"split":[{`) || !strings.Contains(prompt, "Do not include reasons") {
 		t.Fatalf("candidate prompt is not compact: %s", prompt)
 	}
 }
@@ -313,14 +358,14 @@ func TestCandidateInputBatchesCoverEverySourceOnce(t *testing.T) {
 	for i := range inputs {
 		inputs[i].ID = fmt.Sprintf("s-%d", i)
 	}
-	batches := candidateInputBatches(inputs, 100)
-	if len(batches) != 3 {
-		t.Fatalf("batch count = %d, want 3", len(batches))
+	batches := candidateInputBatches(inputs, 50)
+	if len(batches) != 5 {
+		t.Fatalf("batch count = %d, want 5", len(batches))
 	}
 	seen := map[string]int{}
 	for _, batch := range batches {
-		if len(batch) > 100 {
-			t.Fatalf("batch size = %d, want <= 100", len(batch))
+		if len(batch) > 50 {
+			t.Fatalf("batch size = %d, want <= 50", len(batch))
 		}
 		for _, source := range batch {
 			seen[source.ID]++

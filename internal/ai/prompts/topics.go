@@ -85,6 +85,7 @@ Your job is to name each candidate and produce one compact, practical context ob
 
 Input fields per group:
 - group_id: stable identifier that you must reference in output
+- existing_topic_id/name/summary: present when discovery assigned these sources to an existing topic; preserve that topic's scope and improve its context from this evidence
 - source_ids: the sessions, commits, and pull requests supporting this candidate
 - support_level: strong, supported, or weak; weak candidates must remain below 0.50 confidence
 - repeated_edited_files: structural anchors edited by at least two independent sources
@@ -104,6 +105,7 @@ Input fields per group:
 
 Important rules:
 - Return exactly one topic object per input group and keep the same order.
+- This turn normally contains one group and only that group's supporting sources plus compact repository context.
 - Do not merge groups or split a group; candidate discovery already made that decision from all sources.
 - Every topic object must include group_ids with exactly that input group_id.
 - Keep output order aligned to the first referenced group_id for each topic.

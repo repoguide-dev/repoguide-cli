@@ -5,11 +5,13 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"log/slog"
 	"os"
 	"path/filepath"
 	"sort"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/repoguide/repoguide-cli/internal/ai/prompts"
 	"github.com/repoguide/repoguide-core/contracts/v1"
@@ -24,7 +26,7 @@ const maxSessionPrompts = 20
 const promptsPerSession = 3
 
 const (
-	topicModel         = "claude-sonnet-4-6"
+	topicModel         = "claude-sonnet-5"
 	minSessions        = 1
 	minTopicConfidence = 0.30
 )
@@ -57,6 +59,7 @@ type topicCandidate struct {
 	repeatedEditedFiles []string
 	independentAuthors  int
 	supportLevel        string
+	existingTopicID     string
 }
 
 // DeriveTopicsAndGenerateContext derives named TopicContext entries from a RepoAnalysisBundle.
@@ -65,13 +68,35 @@ func DeriveTopicsAndGenerateContext(ctx context.Context, bundle contracts.RepoAn
 	if err != nil {
 		return nil, discoveryUsage, err
 	}
-	repoCtx := buildRepoFileContext(bundle.Repo.Root, recentPrompts(bundle.Sessions, 50))
-	repoCtx = appendSharedDocs(repoCtx, docs)
 	if len(candidates) == 0 {
 		return nil, discoveryUsage, nil
 	}
-	topics, namingUsage, err := nameTopics(ctx, candidates, repoCtx)
+	topics, namingUsage, err := nameTopics(ctx, candidates, compactTopicRepoContext(bundle, docs), existingTopics)
 	return topics, mergeUsage(discoveryUsage, namingUsage), err
+}
+
+func compactTopicRepoContext(bundle contracts.RepoAnalysisBundle, docs map[string]string) string {
+	summaryJSON, _ := json.Marshal(bundle.Summary)
+	var text strings.Builder
+	fmt.Fprintf(&text, "Repository: %s\nTelemetry summary: %s", bundle.Repo.Name, summaryJSON)
+	keys := make([]string, 0, len(docs))
+	for name := range docs {
+		keys = append(keys, name)
+	}
+	sort.Strings(keys)
+	remaining := 2500
+	for _, name := range keys {
+		content := strings.TrimSpace(docs[name])
+		if content == "" || remaining <= 0 {
+			continue
+		}
+		if len(content) > remaining {
+			content = content[:remaining]
+		}
+		fmt.Fprintf(&text, "\n\n%s:\n%s", name, content)
+		remaining -= len(content)
+	}
+	return text.String()
 }
 
 func appendSharedDocs(repoCtx string, docs map[string]string) string {
@@ -835,23 +860,26 @@ func topicScore(c topicCandidate) float64 {
 }
 
 type llmTopicGroup struct {
-	GroupID             string              `json:"group_id"`
-	SourceIDs           []string            `json:"source_ids"`
-	SupportLevel        string              `json:"support_level"`
-	RepeatedEditedFiles []string            `json:"repeated_edited_files,omitempty"`
-	DirectoryHint       string              `json:"directory_hint"`
-	SessionCount        int                 `json:"session_count"`
-	LastActive          string              `json:"last_active,omitempty"`
-	Prompts             []string            `json:"prompts"`
-	Commands            []commandEntry      `json:"commands,omitempty"`
-	TopEditedFiles      []string            `json:"top_edited_files"`
-	TopReadFiles        []string            `json:"top_read_files,omitempty"`
-	TestFiles           []string            `json:"test_files,omitempty"`
-	SeenWith            []seenWithEntry     `json:"seen_with,omitempty"`
-	SubsystemLabels     []string            `json:"subsystem_labels,omitempty"`
-	FileLabels          map[string][]string `json:"file_labels,omitempty"`
-	TestTouchSignal     string              `json:"test_touch_signal,omitempty"`
-	ReadBeforeEditHints []string            `json:"read_before_edit_hints,omitempty"`
+	GroupID              string              `json:"group_id"`
+	ExistingTopicID      string              `json:"existing_topic_id,omitempty"`
+	ExistingTopicName    string              `json:"existing_topic_name,omitempty"`
+	ExistingTopicSummary string              `json:"existing_topic_summary,omitempty"`
+	SourceIDs            []string            `json:"source_ids"`
+	SupportLevel         string              `json:"support_level"`
+	RepeatedEditedFiles  []string            `json:"repeated_edited_files,omitempty"`
+	DirectoryHint        string              `json:"directory_hint"`
+	SessionCount         int                 `json:"session_count"`
+	LastActive           string              `json:"last_active,omitempty"`
+	Prompts              []string            `json:"prompts"`
+	Commands             []commandEntry      `json:"commands,omitempty"`
+	TopEditedFiles       []string            `json:"top_edited_files"`
+	TopReadFiles         []string            `json:"top_read_files,omitempty"`
+	TestFiles            []string            `json:"test_files,omitempty"`
+	SeenWith             []seenWithEntry     `json:"seen_with,omitempty"`
+	SubsystemLabels      []string            `json:"subsystem_labels,omitempty"`
+	FileLabels           map[string][]string `json:"file_labels,omitempty"`
+	TestTouchSignal      string              `json:"test_touch_signal,omitempty"`
+	ReadBeforeEditHints  []string            `json:"read_before_edit_hints,omitempty"`
 }
 
 type llmStartFile struct {
@@ -911,10 +939,14 @@ type llmTopicResult struct {
 	} `json:"evidence"`
 }
 
-func nameTopics(ctx context.Context, candidates []topicCandidate, repoCtx string) ([]model.TopicContext, Usage, error) {
+func nameTopics(ctx context.Context, candidates []topicCandidate, repoCtx string, existingTopics []model.TopicContext) ([]model.TopicContext, Usage, error) {
 	groups := make([]llmTopicGroup, 0, len(candidates))
 	groupByID := make(map[string]topicCandidate, len(candidates))
 	groupOrder := make([]string, 0, len(candidates))
+	existingByID := make(map[string]model.TopicContext, len(existingTopics))
+	for _, topic := range existingTopics {
+		existingByID[topic.ID] = topic
+	}
 	for _, c := range candidates {
 		groupID := toID(c.candidateID, len(groupOrder))
 		if c.candidateID == "" {
@@ -926,44 +958,78 @@ func nameTopics(ctx context.Context, candidates []topicCandidate, repoCtx string
 		}
 		groupByID[groupID] = c
 		groupOrder = append(groupOrder, groupID)
+		existing := existingByID[c.existingTopicID]
 		groups = append(groups, llmTopicGroup{
-			GroupID:             groupID,
-			SourceIDs:           c.sourceIDs,
-			SupportLevel:        c.supportLevel,
-			RepeatedEditedFiles: c.repeatedEditedFiles,
-			DirectoryHint:       c.subsystem.Name,
-			SessionCount:        c.subsystem.Sessions,
-			LastActive:          c.lastActive,
-			Prompts:             c.prompts,
-			Commands:            c.commands,
-			TopEditedFiles:      c.subsystem.TopFiles,
-			TopReadFiles:        c.topReadFiles,
-			TestFiles:           c.tests,
-			SeenWith:            c.seenWith,
-			SubsystemLabels:     c.subsystem.Classification,
-			FileLabels:          fileLabels,
-			TestTouchSignal:     c.testTouchSignal,
-			ReadBeforeEditHints: c.readBeforeEditHints,
+			GroupID:              groupID,
+			ExistingTopicID:      c.existingTopicID,
+			ExistingTopicName:    existing.Name,
+			ExistingTopicSummary: existing.Summary,
+			SourceIDs:            c.sourceIDs,
+			SupportLevel:         c.supportLevel,
+			RepeatedEditedFiles:  c.repeatedEditedFiles,
+			DirectoryHint:        c.subsystem.Name,
+			SessionCount:         c.subsystem.Sessions,
+			LastActive:           c.lastActive,
+			Prompts:              c.prompts,
+			Commands:             c.commands,
+			TopEditedFiles:       c.subsystem.TopFiles,
+			TopReadFiles:         c.topReadFiles,
+			TestFiles:            c.tests,
+			SeenWith:             c.seenWith,
+			SubsystemLabels:      c.subsystem.Classification,
+			FileLabels:           fileLabels,
+			TestTouchSignal:      c.testTouchSignal,
+			ReadBeforeEditHints:  c.readBeforeEditHints,
 		})
 	}
 
-	groupsJSON, _ := json.Marshal(groups)
-	prompt := prompts.BuildTopicPrompt(string(groupsJSON), repoCtx)
-
-	raw, usage, err := callClaude(ctx, topicModel, prompt)
-	if err != nil {
-		return nil, usage, err
+	const parallelTopicTurns = 5
+	type topicTurnResult struct {
+		index int
+		named []llmTopicResult
+		usage Usage
+		err   error
 	}
-
-	raw = stripFences(raw)
-
-	named, parseErr := parseTopicResults(raw)
-	topics := materializeTopicContexts(named, groupByID, groupOrder)
-	if parseErr != nil {
-		if len(named) == 0 {
-			return fallbackTopicContexts(candidates), usage, nil
+	ordered := make([]topicTurnResult, len(groups))
+	var usage Usage
+	for start := 0; start < len(groups); start += parallelTopicTurns {
+		end := min(start+parallelTopicTurns, len(groups))
+		results := make(chan topicTurnResult, end-start)
+		for index := start; index < end; index++ {
+			go func() {
+				started := time.Now()
+				group := groups[index]
+				slog.Info("topic context turn started", "turn", index+1, "turns", len(groups), "group_id", group.GroupID, "sources", len(group.SourceIDs))
+				groupsJSON, _ := json.Marshal([]llmTopicGroup{group})
+				raw, turnUsage, err := callClaude(ctx, topicModel, prompts.BuildTopicPrompt(string(groupsJSON), repoCtx))
+				if err != nil {
+					slog.Error("topic context turn failed", "turn", index+1, "turns", len(groups), "group_id", group.GroupID, "sources", len(group.SourceIDs), "duration_ms", time.Since(started).Milliseconds(), "err", err)
+					results <- topicTurnResult{index: index, usage: turnUsage, err: err}
+					return
+				}
+				named, parseErr := parseTopicResults(stripFences(raw))
+				if parseErr != nil && len(named) == 0 {
+					fallback := fallbackTopicResult(candidates[index])
+					fallback.GroupIDs = []string{group.GroupID}
+					named = []llmTopicResult{fallback}
+				}
+				slog.Info("topic context turn completed", "turn", index+1, "turns", len(groups), "group_id", group.GroupID, "sources", len(group.SourceIDs), "input_tokens", turnUsage.InputTokens, "output_tokens", turnUsage.OutputTokens, "duration_ms", time.Since(started).Milliseconds())
+				results <- topicTurnResult{index: index, named: named, usage: turnUsage}
+			}()
 		}
-		return topics, usage, nil
+		for index := start; index < end; index++ {
+			result := <-results
+			ordered[result.index] = result
+			usage = mergeUsage(usage, result.usage)
+		}
+	}
+	var topics []model.TopicContext
+	for index, result := range ordered {
+		if result.err != nil {
+			return nil, usage, result.err
+		}
+		groupID := groupOrder[index]
+		topics = append(topics, materializeTopicContexts(result.named, groupByID, []string{groupID})...)
 	}
 	return topics, usage, nil
 }
@@ -998,6 +1064,9 @@ func materializeTopicContexts(results []llmTopicResult, groupByID map[string]top
 			continue
 		}
 		topicID := toID(result.Name, i)
+		if len(groupIDs) == 1 && groupByID[groupIDs[0]].existingTopicID != "" {
+			topicID = groupByID[groupIDs[0]].existingTopicID
+		}
 		topicEvidence := model.TopicEvidence{Sessions: evidence.sessions, EditedFiles: evidence.editedFiles, ReadFiles: evidence.readFiles, LastActive: evidence.lastActive, SupportLevel: evidence.supportLevel, SourceIDs: evidence.sourceIDs, RepeatedEditedFiles: evidence.repeatedEditedFiles, IndependentAuthors: evidence.independentAuthors}
 		topic := model.TopicContext{
 			ID:             topicID,
