@@ -1,6 +1,7 @@
 package ai
 
 import (
+	"fmt"
 	"strings"
 	"testing"
 
@@ -304,5 +305,33 @@ func TestTopicCandidatePromptUsesCompactOutput(t *testing.T) {
 	prompt := prompts.BuildTopicCandidatePrompt(`[]`, `[]`)
 	if !strings.Contains(prompt, `"groups":[["source-id-1"`) || !strings.Contains(prompt, "Do not include reasons") {
 		t.Fatalf("candidate prompt is not compact: %s", prompt)
+	}
+}
+
+func TestCandidateInputBatchesCoverEverySourceOnce(t *testing.T) {
+	inputs := make([]candidateSourceInput, 205)
+	for i := range inputs {
+		inputs[i].ID = fmt.Sprintf("s-%d", i)
+	}
+	batches := candidateInputBatches(inputs, 100)
+	if len(batches) != 3 {
+		t.Fatalf("batch count = %d, want 3", len(batches))
+	}
+	seen := map[string]int{}
+	for _, batch := range batches {
+		if len(batch) > 100 {
+			t.Fatalf("batch size = %d, want <= 100", len(batch))
+		}
+		for _, source := range batch {
+			seen[source.ID]++
+		}
+	}
+	if len(seen) != len(inputs) {
+		t.Fatalf("covered %d sources, want %d", len(seen), len(inputs))
+	}
+	for id, count := range seen {
+		if count != 1 {
+			t.Fatalf("source %s appeared %d times", id, count)
+		}
 	}
 }

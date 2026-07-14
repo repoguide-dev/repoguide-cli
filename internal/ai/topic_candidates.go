@@ -13,6 +13,8 @@ import (
 	"github.com/repoguide/repoguide-core/model"
 )
 
+const maxCandidateSourcesPerCall = 100
+
 type candidateSourceInput struct {
 	ID           string   `json:"id"`
 	SourceType   string   `json:"source_type"`
@@ -71,15 +73,44 @@ func discoverTopicCandidates(ctx context.Context, bundle contracts.RepoAnalysisB
 			"edit_targets": topic.ImportantFiles.EditTargets,
 		})
 	}
-	sourcesJSON, _ := json.Marshal(inputs)
 	existingJSON, _ := json.Marshal(existingSummaries)
-	raw, usage, err := callClaudeMaxTokens(ctx, topicModel, prompts.BuildTopicCandidatePrompt(string(sourcesJSON), string(existingJSON)), 16384)
-	if err != nil {
-		return nil, usage, err
+	type batchResult struct {
+		index    int
+		response candidateDiscoveryResponse
+		usage    Usage
+		err      error
 	}
-	response, parseErr := parseCandidateDiscoveryResponse(raw)
-	if parseErr != nil {
-		return nil, usage, fmt.Errorf("topic candidate discovery: parse response (%d chars, %d output tokens): %w", len(raw), usage.OutputTokens, parseErr)
+	batches := candidateInputBatches(inputs, maxCandidateSourcesPerCall)
+	results := make(chan batchResult, len(batches))
+	for index, batch := range batches {
+		go func() {
+			sourcesJSON, _ := json.Marshal(batch)
+			raw, batchUsage, err := callClaudeMaxTokens(ctx, topicModel, prompts.BuildTopicCandidatePrompt(string(sourcesJSON), string(existingJSON)), 8192)
+			if err != nil {
+				results <- batchResult{index: index, usage: batchUsage, err: err}
+				return
+			}
+			response, parseErr := parseCandidateDiscoveryResponse(raw)
+			if parseErr != nil {
+				parseErr = fmt.Errorf("topic candidate discovery batch %d/%d: parse response (%d chars, %d output tokens): %w", index+1, len(batches), len(raw), batchUsage.OutputTokens, parseErr)
+			}
+			results <- batchResult{index: index, response: response, usage: batchUsage, err: parseErr}
+		}()
+	}
+	ordered := make([]batchResult, len(batches))
+	var usage Usage
+	for range batches {
+		result := <-results
+		ordered[result.index] = result
+		usage = mergeUsage(usage, result.usage)
+	}
+	var response candidateDiscoveryResponse
+	for _, result := range ordered {
+		if result.err != nil {
+			return nil, usage, result.err
+		}
+		response.Candidates = append(response.Candidates, result.response.Candidates...)
+		response.UnassignedSourceIDs = append(response.UnassignedSourceIDs, result.response.UnassignedSourceIDs...)
 	}
 	groups := normalizeCandidateGroups(response, sources)
 	candidates := make([]topicCandidate, 0, len(groups))
@@ -89,6 +120,21 @@ func discoverTopicCandidates(ctx context.Context, bundle contracts.RepoAnalysisB
 		}
 	}
 	return filterAndRank(candidates), usage, nil
+}
+
+func candidateInputBatches(inputs []candidateSourceInput, limit int) [][]candidateSourceInput {
+	if len(inputs) == 0 || limit <= 0 {
+		return nil
+	}
+	batches := make([][]candidateSourceInput, 0, (len(inputs)+limit-1)/limit)
+	for start := 0; start < len(inputs); start += limit {
+		end := start + limit
+		if end > len(inputs) {
+			end = len(inputs)
+		}
+		batches = append(batches, inputs[start:end])
+	}
+	return batches
 }
 
 func parseCandidateDiscoveryResponse(raw string) (candidateDiscoveryResponse, error) {
@@ -257,7 +303,16 @@ func mergeOverlappingCandidateGroups(groups []candidateGroup, sources map[string
 				}
 			}
 			union := len(left) + len(right) - intersection
-			if intersection >= 2 && union > 0 && float64(intersection)/float64(union) >= 0.65 {
+			minSize := min(len(left), len(right))
+			jaccard := 0.0
+			containment := 0.0
+			if union > 0 {
+				jaccard = float64(intersection) / float64(union)
+			}
+			if minSize > 0 {
+				containment = float64(intersection) / float64(minSize)
+			}
+			if intersection >= 2 && (jaccard >= 0.35 || containment >= 0.5) {
 				groups[i].SourceIDs = dedupeStrings(append(groups[i].SourceIDs, groups[j].SourceIDs...))
 				groups = append(groups[:j], groups[j+1:]...)
 				left = candidateChangedFileSet(groups[i], sources)
