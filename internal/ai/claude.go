@@ -86,11 +86,16 @@ func callClaudeMaxTokens(ctx context.Context, model, userPrompt string, maxToken
 	requestCtx, cancel := newAnthropicRequestContext(ctx)
 	defer cancel()
 
-	body, _ := json.Marshal(map[string]any{
+	payload := map[string]any{
 		"model":      model,
 		"max_tokens": maxTokens,
 		"messages":   []map[string]string{{"role": "user", "content": userPrompt}},
-	})
+	}
+	if model == "claude-sonnet-5" {
+		payload["thinking"] = map[string]string{"type": "disabled"}
+		payload["output_config"] = map[string]string{"effort": "medium"}
+	}
+	body, _ := json.Marshal(payload)
 
 	req, err := http.NewRequestWithContext(requestCtx, http.MethodPost, anthropicAPIURL, bytes.NewReader(body))
 	if err != nil {
@@ -123,6 +128,7 @@ func callClaudeMaxTokens(ctx context.Context, model, userPrompt string, maxToken
 			InputTokens  int `json:"input_tokens"`
 			OutputTokens int `json:"output_tokens"`
 		} `json:"usage"`
+		StopReason string `json:"stop_reason"`
 	}
 	if err := json.Unmarshal(data, &out); err != nil {
 		return "", Usage{}, fmt.Errorf("claude API: parse response: %w", err)
@@ -133,7 +139,11 @@ func callClaudeMaxTokens(ctx context.Context, model, userPrompt string, maxToken
 			return c.Text, usage, nil
 		}
 	}
-	return "", usage, fmt.Errorf("claude API: no text content in response")
+	contentTypes := make([]string, 0, len(out.Content))
+	for _, content := range out.Content {
+		contentTypes = append(contentTypes, content.Type)
+	}
+	return "", usage, fmt.Errorf("claude API: no text content (stop_reason=%s content_types=%v input_tokens=%d output_tokens=%d)", out.StopReason, contentTypes, usage.InputTokens, usage.OutputTokens)
 }
 
 // callClaudeWithSystem sends a call with a cached system prompt and a per-request user message.
