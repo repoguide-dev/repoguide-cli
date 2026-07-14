@@ -17,13 +17,8 @@ Structural rules:
 - Existing topics are separation context: do not form a new candidate that merely duplicates one unless the sources clearly describe a distinct area.
 - Do not invent source IDs.
 
-Return only JSON:
-{
-  "candidates": [
-    {"candidate_id":"candidate_1","source_ids":["source id"],"reason":"brief grouping rationale without a topic name"}
-  ],
-  "unassigned_source_ids": ["isolated source id"]
-}
+Return only compact JSON. Do not include reasons, labels, prose, or repeated source metadata:
+{"groups":[["source-id-1","source-id-2"],["source-id-3","source-id-4"]],"unassigned":["isolated-source-id"]}
 
 Existing topics JSON:
 %s

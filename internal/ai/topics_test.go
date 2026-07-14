@@ -286,3 +286,23 @@ func TestBuildCandidateFromSourcesKeepsWeakMultiSourceGroup(t *testing.T) {
 		t.Fatalf("candidate = %#v, want retained weak group", candidate)
 	}
 }
+
+func TestParseCandidateDiscoveryResponseRecoversCompleteGroupsFromTruncation(t *testing.T) {
+	response, err := parseCandidateDiscoveryResponse(`{"groups":[["s1","s2"],["s3","s4"],["s5"`)
+	if err != nil {
+		t.Fatalf("parseCandidateDiscoveryResponse: %v", err)
+	}
+	if len(response.Candidates) != 2 {
+		t.Fatalf("candidates = %#v, want two complete recovered groups", response.Candidates)
+	}
+	if got := strings.Join(response.Candidates[1].SourceIDs, ","); got != "s3,s4" {
+		t.Fatalf("second recovered group = %q", got)
+	}
+}
+
+func TestTopicCandidatePromptUsesCompactOutput(t *testing.T) {
+	prompt := prompts.BuildTopicCandidatePrompt(`[]`, `[]`)
+	if !strings.Contains(prompt, `"groups":[["source-id-1"`) || !strings.Contains(prompt, "Do not include reasons") {
+		t.Fatalf("candidate prompt is not compact: %s", prompt)
+	}
+}

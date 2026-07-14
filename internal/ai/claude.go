@@ -71,6 +71,10 @@ func callClaudeCLI(ctx context.Context, model, system, userPrompt string) (strin
 
 // callClaude sends a single user message to the Anthropic Messages API and returns the assistant text.
 func callClaude(ctx context.Context, model, userPrompt string) (string, Usage, error) {
+	return callClaudeMaxTokens(ctx, model, userPrompt, 8192)
+}
+
+func callClaudeMaxTokens(ctx context.Context, model, userPrompt string, maxTokens int) (string, Usage, error) {
 	if useCLI {
 		return callClaudeCLI(ctx, model, "", userPrompt)
 	}
@@ -84,7 +88,7 @@ func callClaude(ctx context.Context, model, userPrompt string) (string, Usage, e
 
 	body, _ := json.Marshal(map[string]any{
 		"model":      model,
-		"max_tokens": 8192,
+		"max_tokens": maxTokens,
 		"messages":   []map[string]string{{"role": "user", "content": userPrompt}},
 	})
 

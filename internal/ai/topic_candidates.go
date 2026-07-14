@@ -32,6 +32,8 @@ type candidateGroup struct {
 type candidateDiscoveryResponse struct {
 	Candidates          []candidateGroup `json:"candidates"`
 	UnassignedSourceIDs []string         `json:"unassigned_source_ids"`
+	Groups              [][]string       `json:"groups"`
+	Unassigned          []string         `json:"unassigned"`
 }
 
 func discoverTopicCandidates(ctx context.Context, bundle contracts.RepoAnalysisBundle, existing []model.TopicContext) ([]topicCandidate, Usage, error) {
@@ -71,13 +73,13 @@ func discoverTopicCandidates(ctx context.Context, bundle contracts.RepoAnalysisB
 	}
 	sourcesJSON, _ := json.Marshal(inputs)
 	existingJSON, _ := json.Marshal(existingSummaries)
-	raw, usage, err := callClaude(ctx, topicModel, prompts.BuildTopicCandidatePrompt(string(sourcesJSON), string(existingJSON)))
+	raw, usage, err := callClaudeMaxTokens(ctx, topicModel, prompts.BuildTopicCandidatePrompt(string(sourcesJSON), string(existingJSON)), 16384)
 	if err != nil {
 		return nil, usage, err
 	}
-	var response candidateDiscoveryResponse
-	if err := json.Unmarshal([]byte(strings.TrimSpace(stripFences(raw))), &response); err != nil {
-		return nil, usage, fmt.Errorf("topic candidate discovery: parse response: %w", err)
+	response, parseErr := parseCandidateDiscoveryResponse(raw)
+	if parseErr != nil {
+		return nil, usage, fmt.Errorf("topic candidate discovery: parse response (%d chars, %d output tokens): %w", len(raw), usage.OutputTokens, parseErr)
 	}
 	groups := normalizeCandidateGroups(response, sources)
 	candidates := make([]topicCandidate, 0, len(groups))
@@ -87,6 +89,74 @@ func discoverTopicCandidates(ctx context.Context, bundle contracts.RepoAnalysisB
 		}
 	}
 	return filterAndRank(candidates), usage, nil
+}
+
+func parseCandidateDiscoveryResponse(raw string) (candidateDiscoveryResponse, error) {
+	clean := strings.TrimSpace(stripFences(raw))
+	var response candidateDiscoveryResponse
+	if err := json.Unmarshal([]byte(clean), &response); err != nil {
+		response.Groups = recoverCompactCandidateGroups(clean)
+		if len(response.Groups) == 0 {
+			return candidateDiscoveryResponse{}, err
+		}
+	}
+	for i, ids := range response.Groups {
+		response.Candidates = append(response.Candidates, candidateGroup{CandidateID: fmt.Sprintf("candidate_%d", i+1), SourceIDs: ids})
+	}
+	response.UnassignedSourceIDs = append(response.UnassignedSourceIDs, response.Unassigned...)
+	return response, nil
+}
+
+func recoverCompactCandidateGroups(raw string) [][]string {
+	key := strings.Index(raw, `"groups"`)
+	if key < 0 {
+		return nil
+	}
+	outer := strings.Index(raw[key:], "[")
+	if outer < 0 {
+		return nil
+	}
+	start := key + outer
+	depth, groupStart := 0, -1
+	inString, escaped := false, false
+	var groups [][]string
+	for i := start; i < len(raw); i++ {
+		ch := raw[i]
+		if inString {
+			if escaped {
+				escaped = false
+			} else if ch == '\\' {
+				escaped = true
+			} else if ch == '"' {
+				inString = false
+			}
+			continue
+		}
+		if ch == '"' {
+			inString = true
+			continue
+		}
+		switch ch {
+		case '[':
+			depth++
+			if depth == 2 {
+				groupStart = i
+			}
+		case ']':
+			if depth == 2 && groupStart >= 0 {
+				var ids []string
+				if json.Unmarshal([]byte(raw[groupStart:i+1]), &ids) == nil {
+					groups = append(groups, ids)
+				}
+				groupStart = -1
+			}
+			depth--
+			if depth <= 0 {
+				return groups
+			}
+		}
+	}
+	return groups
 }
 
 func candidateSources(bundle contracts.RepoAnalysisBundle) map[string]contracts.RepoAnalysisSource {
