@@ -14,6 +14,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -604,8 +605,10 @@ func buildRepoEventsZip(repoID, repoRoot string, since time.Time) ([]byte, int, 
 		n++
 	}
 
-	if aliases := buildRepoPathAliases(repoRoot); len(aliases) > 0 {
-		data, err := json.Marshal(map[string]any{"path_aliases": aliases})
+	aliases := buildRepoPathAliases(repoRoot)
+	commits := buildRecentGitCommits(repoRoot, 100)
+	if len(aliases) > 0 || len(commits) > 0 {
+		data, err := json.Marshal(map[string]any{"path_aliases": aliases, "commits": commits})
 		if err != nil {
 			return nil, 0, err
 		}
@@ -623,6 +626,45 @@ func buildRepoEventsZip(repoID, repoRoot string, since time.Time) ([]byte, int, 
 		return nil, 0, err
 	}
 	return buf.Bytes(), n, nil
+}
+
+type repoGitCommit struct {
+	ID           string   `json:"id"`
+	Subject      string   `json:"subject"`
+	Author       string   `json:"author,omitempty"`
+	Timestamp    string   `json:"timestamp,omitempty"`
+	ChangedFiles []string `json:"changed_files,omitempty"`
+}
+
+func buildRecentGitCommits(repoRoot string, limit int) []repoGitCommit {
+	if strings.TrimSpace(repoRoot) == "" || limit <= 0 {
+		return nil
+	}
+	cmd := exec.Command("git", "-C", repoRoot, "log", "-n", strconv.Itoa(limit), "--format=%x1e%H%x1f%an%x1f%aI%x1f%s", "--name-only")
+	out, err := cmd.Output()
+	if err != nil {
+		return nil
+	}
+	var commits []repoGitCommit
+	for _, record := range strings.Split(string(out), "\x1e") {
+		record = strings.TrimSpace(record)
+		if record == "" {
+			continue
+		}
+		lines := strings.Split(record, "\n")
+		fields := strings.Split(lines[0], "\x1f")
+		if len(fields) != 4 || strings.TrimSpace(fields[0]) == "" {
+			continue
+		}
+		commit := repoGitCommit{ID: fields[0], Author: fields[1], Timestamp: fields[2], Subject: fields[3]}
+		for _, path := range lines[1:] {
+			if path = strings.TrimSpace(path); path != "" {
+				commit.ChangedFiles = append(commit.ChangedFiles, filepath.ToSlash(path))
+			}
+		}
+		commits = append(commits, commit)
+	}
+	return commits
 }
 
 func buildRepoPathAliases(repoRoot string) map[string]string {

@@ -41,6 +41,7 @@ type commandEntry struct {
 }
 
 type topicCandidate struct {
+	candidateID         string
 	subsystem           contracts.RepoAnalysisSubsystem
 	prompts             []string
 	commands            []commandEntry
@@ -52,21 +53,25 @@ type topicCandidate struct {
 	fileClassifications map[string][]string
 	readBeforeEditHints []string
 	testTouchSignal     string
+	sourceIDs           []string
+	repeatedEditedFiles []string
+	independentAuthors  int
+	supportLevel        string
 }
 
 // DeriveTopicsAndGenerateContext derives named TopicContext entries from a RepoAnalysisBundle.
-func DeriveTopicsAndGenerateContext(ctx context.Context, bundle contracts.RepoAnalysisBundle, docs map[string]string) ([]model.TopicContext, Usage, error) {
-	candidates := buildCandidates(bundle)
-	candidates = filterAndRank(candidates)
+func DeriveTopicsAndGenerateContext(ctx context.Context, bundle contracts.RepoAnalysisBundle, docs map[string]string, existingTopics []model.TopicContext) ([]model.TopicContext, Usage, error) {
+	candidates, discoveryUsage, err := discoverTopicCandidates(ctx, bundle, existingTopics)
+	if err != nil {
+		return nil, discoveryUsage, err
+	}
 	repoCtx := buildRepoFileContext(bundle.Repo.Root, recentPrompts(bundle.Sessions, 50))
 	repoCtx = appendSharedDocs(repoCtx, docs)
 	if len(candidates) == 0 {
-		candidates = buildFileStructureCandidates(bundle.Repo.Root)
-		if len(candidates) == 0 {
-			return nil, Usage{}, nil
-		}
+		return nil, discoveryUsage, nil
 	}
-	return nameTopics(ctx, candidates, repoCtx)
+	topics, namingUsage, err := nameTopics(ctx, candidates, repoCtx)
+	return topics, mergeUsage(discoveryUsage, namingUsage), err
 }
 
 func appendSharedDocs(repoCtx string, docs map[string]string) string {
@@ -831,6 +836,9 @@ func topicScore(c topicCandidate) float64 {
 
 type llmTopicGroup struct {
 	GroupID             string              `json:"group_id"`
+	SourceIDs           []string            `json:"source_ids"`
+	SupportLevel        string              `json:"support_level"`
+	RepeatedEditedFiles []string            `json:"repeated_edited_files,omitempty"`
 	DirectoryHint       string              `json:"directory_hint"`
 	SessionCount        int                 `json:"session_count"`
 	LastActive          string              `json:"last_active,omitempty"`
@@ -908,7 +916,10 @@ func nameTopics(ctx context.Context, candidates []topicCandidate, repoCtx string
 	groupByID := make(map[string]topicCandidate, len(candidates))
 	groupOrder := make([]string, 0, len(candidates))
 	for _, c := range candidates {
-		groupID := toID(c.subsystem.Name, len(groupOrder))
+		groupID := toID(c.candidateID, len(groupOrder))
+		if c.candidateID == "" {
+			groupID = toID(c.subsystem.Name, len(groupOrder))
+		}
 		fileLabels := c.fileClassifications
 		if len(fileLabels) == 0 {
 			fileLabels = nil
@@ -917,6 +928,9 @@ func nameTopics(ctx context.Context, candidates []topicCandidate, repoCtx string
 		groupOrder = append(groupOrder, groupID)
 		groups = append(groups, llmTopicGroup{
 			GroupID:             groupID,
+			SourceIDs:           c.sourceIDs,
+			SupportLevel:        c.supportLevel,
+			RepeatedEditedFiles: c.repeatedEditedFiles,
 			DirectoryHint:       c.subsystem.Name,
 			SessionCount:        c.subsystem.Sessions,
 			LastActive:          c.lastActive,
@@ -955,27 +969,36 @@ func nameTopics(ctx context.Context, candidates []topicCandidate, repoCtx string
 }
 
 type aggregatedTopicEvidence struct {
-	sessions    int
-	editedFiles int
-	readFiles   int
-	lastActive  string
+	sessions            int
+	editedFiles         int
+	readFiles           int
+	lastActive          string
+	supportLevel        string
+	sourceIDs           []string
+	repeatedEditedFiles []string
+	independentAuthors  int
 }
 
 func materializeTopicContexts(results []llmTopicResult, groupByID map[string]topicCandidate, groupOrder []string) []model.TopicContext {
 	topics := make([]model.TopicContext, 0, len(results))
 	for i, result := range results {
-		if result.Confidence < minTopicConfidence {
-			continue
-		}
-
 		groupIDs := normalizeTopicGroupIDs(result.GroupIDs, groupByID, groupOrder, i, len(results))
 		if len(groupIDs) == 0 {
 			continue
 		}
 
 		evidence := aggregateTopicEvidence(groupIDs, groupByID)
+		if evidence.supportLevel == "weak" {
+			if result.Confidence < 0.35 {
+				result.Confidence = 0.35
+			} else if result.Confidence > 0.49 {
+				result.Confidence = 0.49
+			}
+		} else if result.Confidence < minTopicConfidence {
+			continue
+		}
 		topicID := toID(result.Name, i)
-		topicEvidence := model.TopicEvidence{Sessions: evidence.sessions, EditedFiles: evidence.editedFiles, ReadFiles: evidence.readFiles, LastActive: evidence.lastActive}
+		topicEvidence := model.TopicEvidence{Sessions: evidence.sessions, EditedFiles: evidence.editedFiles, ReadFiles: evidence.readFiles, LastActive: evidence.lastActive, SupportLevel: evidence.supportLevel, SourceIDs: evidence.sourceIDs, RepeatedEditedFiles: evidence.repeatedEditedFiles, IndependentAuthors: evidence.independentAuthors}
 		topic := model.TopicContext{
 			ID:             topicID,
 			Name:           result.Name,
@@ -1033,6 +1056,8 @@ func normalizeTopicGroupIDs(groupIDs []string, groupByID map[string]topicCandida
 
 func aggregateTopicEvidence(groupIDs []string, groupByID map[string]topicCandidate) aggregatedTopicEvidence {
 	var out aggregatedTopicEvidence
+	sourceSeen := map[string]struct{}{}
+	repeatedSeen := map[string]struct{}{}
 	for _, groupID := range groupIDs {
 		candidate, ok := groupByID[groupID]
 		if !ok {
@@ -1044,16 +1069,50 @@ func aggregateTopicEvidence(groupIDs []string, groupByID map[string]topicCandida
 		if candidate.lastActive > out.lastActive {
 			out.lastActive = candidate.lastActive
 		}
+		if supportRank(candidate.supportLevel) > supportRank(out.supportLevel) {
+			out.supportLevel = candidate.supportLevel
+		}
+		out.independentAuthors += candidate.independentAuthors
+		for _, id := range candidate.sourceIDs {
+			if _, ok := sourceSeen[id]; !ok {
+				sourceSeen[id] = struct{}{}
+				out.sourceIDs = append(out.sourceIDs, id)
+			}
+		}
+		for _, path := range candidate.repeatedEditedFiles {
+			if _, ok := repeatedSeen[path]; !ok {
+				repeatedSeen[path] = struct{}{}
+				out.repeatedEditedFiles = append(out.repeatedEditedFiles, path)
+			}
+		}
 	}
+	sort.Strings(out.sourceIDs)
+	sort.Strings(out.repeatedEditedFiles)
 	return out
+}
+
+func supportRank(level string) int {
+	switch level {
+	case "strong":
+		return 3
+	case "supported":
+		return 2
+	case "weak":
+		return 1
+	default:
+		return 0
+	}
 }
 
 func fallbackTopicContexts(candidates []topicCandidate) []model.TopicContext {
 	topics := make([]model.TopicContext, 0, len(candidates))
 	for i, candidate := range candidates {
 		result := fallbackTopicResult(candidate)
+		if candidate.supportLevel == "weak" {
+			result.Confidence = 0.4
+		}
 		topicID := toID(result.Name, i)
-		evidence := model.TopicEvidence{Sessions: candidate.subsystem.Sessions, EditedFiles: candidate.subsystem.SourceEdits + candidate.subsystem.TestEdits, ReadFiles: candidate.readFiles, LastActive: candidate.lastActive}
+		evidence := model.TopicEvidence{Sessions: candidate.subsystem.Sessions, EditedFiles: candidate.subsystem.SourceEdits + candidate.subsystem.TestEdits, ReadFiles: candidate.readFiles, LastActive: candidate.lastActive, SupportLevel: candidate.supportLevel, SourceIDs: candidate.sourceIDs, RepeatedEditedFiles: candidate.repeatedEditedFiles, IndependentAuthors: candidate.independentAuthors}
 		topic := model.TopicContext{
 			ID:             topicID,
 			Name:           result.Name,

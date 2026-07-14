@@ -80,11 +80,14 @@ const topicPromptRepoCtxTemplate = `Repository context (file structure and docs)
 
 const topicPromptTemplate = `You are generating routing topics from coding agent session telemetry for one software repository.
 
-Each group contains sessions that mostly edited files in the same directory or nearby file cluster.
-Your job is to infer the developer-facing work topics and produce compact, practical context objects that help future agents start work without exploring the repository from scratch.
+Each group is a pre-validated topic candidate assembled from semantically related sessions, commits, or pull requests. File evidence was collected only after that grouping step.
+Your job is to name each candidate and produce one compact, practical context object that helps future agents start work without exploring the repository from scratch.
 
 Input fields per group:
 - group_id: stable identifier that you must reference in output
+- source_ids: the sessions, commits, and pull requests supporting this candidate
+- support_level: strong, supported, or weak; weak candidates must remain below 0.50 confidence
+- repeated_edited_files: structural anchors edited by at least two independent sources
 - directory_hint: primary directory edited in these sessions
 - session_count: how many sessions touched this group
 - last_active: date of the most recent session in this group - older groups are more likely to contain stale file paths
@@ -100,12 +103,9 @@ Input fields per group:
 - read_before_edit_hints: observed patterns where one file is read before another is edited
 
 Important rules:
-- Return as many topics as the evidence supports - do not target a topic count. Emit every distinct recurring work area you can see, and no topic you cannot ground in the input.
-- Skip groups entirely if you are not confident they represent a distinct recurring workflow.
-- When session_count is 0, infer topics from file names, types, and the repository context above instead of prompts.
-- You may merge multiple related groups into one topic when prompts and files clearly point to the same recurring work.
-- You may also split one input group into multiple topics when the prompts, files, or workflows show distinct recurring areas within the same directory. Reuse the same group_id across those topics only when each topic has a clearly different focus.
-- Every topic object must include group_ids with one or more input group_id values.
+- Return exactly one topic object per input group and keep the same order.
+- Do not merge groups or split a group; candidate discovery already made that decision from all sources.
+- Every topic object must include group_ids with exactly that input group_id.
 - Keep output order aligned to the first referenced group_id for each topic.
 - Do not invent files not present in the input data.
 - Use the whole group/bundle context when selecting files for a topic. Relevant files may come from top_edited_files, top_read_files, test_files, seen_with, file_labels, and read_before_edit_hints across the group, not only from the most obvious prompt wording.
@@ -124,7 +124,7 @@ Important rules:
 - Create topics per domain area: each topic should map to one recurring business/domain concept, feature area, workflow, integration, or service boundary that an agent would intentionally choose.
 - Topic names must describe a recurring kind of work, not a folder name.
 - Prefer area-focused topics over layer buckets: name the concrete feature, workflow, page, service, or integration, not "frontend", "backend", "UI", or the whole app area.
-- If one directory contains multiple recurring features, split them by developer intent and touched files instead of collapsing them into one broad layer topic.
+- Candidate groups already separate recurring features within a directory; preserve that boundary.
 - If two sets of sessions touch the same layer but different domains, create separate topics for those domains rather than one combined layer topic.
 - For each domain topic, use the surrounding group/bundle evidence to pull in the larger relevant file context: include neighboring schema, shared state, validators, tests, and cross-cutting files when they materially support the domain.
 - Avoid vague names like "Backend updates", "CLI changes", "Code improvements".
@@ -134,11 +134,11 @@ Important rules:
 
 Return only valid JSON. No markdown, no comments.
 
-Return a JSON array. Each object represents one topic and may reference one or more groups:
+Return a JSON array. Each object represents exactly one input group:
 
 [
   {
-    "group_ids": ["backend_server", "backend_model"],
+    "group_ids": ["candidate_1"],
     "name": "concise topic name, 3-6 words",
     "summary": "one sentence explaining what work this topic covers",
     "confidence": 0.88,
@@ -183,7 +183,7 @@ Return a JSON array. Each object represents one topic and may reference one or m
 ]
 
 Field rules:
- - group_ids: 1+ input group_id values. Reuse a group_id across multiple topics only when the same directory truly contains multiple distinct recurring areas; otherwise use each input group once.
+ - group_ids: exactly one input group_id; use each input group exactly once.
 ` + SharedFieldRules + `
 
 ` + SharedNamingExamples + `

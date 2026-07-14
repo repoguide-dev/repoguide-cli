@@ -37,7 +37,8 @@ func (s *TopicService) BuildTopics(ctx context.Context, repoID string) error {
 		return fmt.Errorf("build bundle: %w", err)
 	}
 	docs, _ := s.store.Events().GetDocs(ctx, repoID)
-	topics, _, err := s.ai.DeriveTopicsAndGenerateContext(ctx, bundle, docs)
+	existing, _ := s.store.Topics().GetTopics(ctx, repoID)
+	topics, _, err := s.ai.DeriveTopicsAndGenerateContext(ctx, bundle, docs, existing)
 	if err != nil {
 		return fmt.Errorf("AI topics: %w", err)
 	}

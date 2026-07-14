@@ -228,21 +228,61 @@ func TestMaterializeTopicContextsSkipsLowConfidenceTopics(t *testing.T) {
 	}
 }
 
-func TestBuildTopicPromptLetsEvidenceSetTopicCount(t *testing.T) {
+func TestBuildTopicPromptPreservesCandidateBoundaries(t *testing.T) {
 	prompt := prompts.BuildTopicPrompt("[]", "")
 	checks := []string{
-		"Return as many topics as the evidence supports - do not target a topic count.",
+		"Return exactly one topic object per input group",
 		"Judge recurrence across the group's whole prompt list, never from one prompt in isolation",
-		"Every topic object must include group_ids with one or more input group_id values.",
+		"Every topic object must include group_ids with exactly that input group_id.",
 		"If you are unsure, omit the topic instead of inventing a generic one.",
 		"Create topics per domain area",
 		"Use the whole group/bundle context when selecting files for a topic.",
-		"You may also split one input group into multiple topics when the prompts, files, or workflows show distinct recurring areas within the same directory.",
+		"Do not merge groups or split a group",
 		"Prefer area-focused topics over layer buckets",
 	}
 	for _, want := range checks {
 		if !strings.Contains(prompt, want) {
 			t.Fatalf("prompt missing %q", want)
 		}
+	}
+}
+
+func TestBuildCandidateFromSourcesRequiresMultipleIndependentSources(t *testing.T) {
+	sources := map[string]contracts.RepoAnalysisSource{
+		"s1": {ID: "s1", SourceType: "session", Prompts: []string{"create profile page"}, ChangedFiles: []string{"web/ProfilePage.jsx"}},
+	}
+	if _, ok := buildCandidateFromSources(candidateGroup{CandidateID: "profile", SourceIDs: []string{"s1"}}, sources, contracts.RepoAnalysisBundle{}); ok {
+		t.Fatal("isolated source must not create a topic candidate")
+	}
+}
+
+func TestBuildCandidateFromSourcesScoresStructuralSupport(t *testing.T) {
+	sources := map[string]contracts.RepoAnalysisSource{}
+	for i, id := range []string{"s1", "s2", "s3", "s4"} {
+		sources[id] = contracts.RepoAnalysisSource{
+			ID: id, SourceType: "session", AuthorID: id,
+			Prompts: []string{"create profile page"}, ChangedFiles: []string{"web/ProfilePage.jsx", "web/profile.css"},
+			Timestamp: "2026-07-0" + string(rune('1'+i)) + "T00:00:00Z",
+		}
+	}
+	candidate, ok := buildCandidateFromSources(candidateGroup{CandidateID: "profile", SourceIDs: []string{"s1", "s2", "s3", "s4"}}, sources, contracts.RepoAnalysisBundle{
+		Files: []contracts.RepoAnalysisFile{{Path: "web/ProfilePage.jsx", Kind: "source"}, {Path: "web/profile.css", Kind: "source"}},
+	})
+	if !ok || candidate.supportLevel != "strong" {
+		t.Fatalf("candidate = %#v, want strong", candidate)
+	}
+	if len(candidate.repeatedEditedFiles) != 2 || candidate.independentAuthors != 4 {
+		t.Fatalf("structural evidence = %#v authors=%d", candidate.repeatedEditedFiles, candidate.independentAuthors)
+	}
+}
+
+func TestBuildCandidateFromSourcesKeepsWeakMultiSourceGroup(t *testing.T) {
+	sources := map[string]contracts.RepoAnalysisSource{
+		"s1": {ID: "s1", SourceType: "session", Prompts: []string{"profile avatar"}, ChangedFiles: []string{"web/avatar.jsx"}},
+		"s2": {ID: "s2", SourceType: "commit", Prompts: []string{"profile biography"}, ChangedFiles: []string{"web/bio.jsx"}},
+	}
+	candidate, ok := buildCandidateFromSources(candidateGroup{CandidateID: "profile", SourceIDs: []string{"s1", "s2"}}, sources, contracts.RepoAnalysisBundle{})
+	if !ok || candidate.supportLevel != "weak" {
+		t.Fatalf("candidate = %#v, want retained weak group", candidate)
 	}
 }

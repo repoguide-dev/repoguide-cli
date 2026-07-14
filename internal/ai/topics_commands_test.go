@@ -114,8 +114,9 @@ func TestTopicPromptDemandsEvidenceBasedOutput(t *testing.T) {
 		"Use the whole group/bundle context when selecting files for a topic",
 		// topic granularity should stay focused
 		"Prefer area-focused topics over layer buckets",
-		"split them by developer intent and touched files instead of collapsing them into one broad layer topic",
-		"Reuse a group_id across multiple topics only when the same directory truly contains multiple distinct recurring areas",
+		"Candidate groups already separate recurring features within a directory",
+		"Do not merge groups or split a group",
+		"group_ids: exactly one input group_id",
 	}
 	for _, want := range wants {
 		if !strings.Contains(prompt, want) {

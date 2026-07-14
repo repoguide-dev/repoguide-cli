@@ -7,7 +7,7 @@ import (
 	"github.com/repoguide/repoguide-core/model"
 )
 
-const bundleVersion = 11
+const bundleVersion = 12
 
 // IsDirectoryPath reports whether path looks like a directory (or the repo
 // root) rather than an individual file, using the same heuristic the
@@ -55,6 +55,7 @@ type searchTrace struct {
 type backendSession struct {
 	id        string
 	agent     string
+	authorID  string
 	name      string
 	timestamp time.Time
 	metrics   sessionMetrics
@@ -186,6 +187,7 @@ type RepoAnalysisBundle = contracts.RepoAnalysisBundle
 type RepoAnalysisRepo = contracts.RepoAnalysisRepo
 type RepoAnalysisSummary = contracts.RepoAnalysisSummary
 type RepoAnalysisSession = contracts.RepoAnalysisSession
+type RepoAnalysisSource = contracts.RepoAnalysisSource
 type RepoAnalysisCommand = contracts.RepoAnalysisCommand
 type SessionInteraction = contracts.SessionInteraction
 type RepoAnalysisFile = contracts.RepoAnalysisFile
