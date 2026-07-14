@@ -257,6 +257,16 @@ func TestBuildCandidateFromSourcesRequiresMultipleIndependentSources(t *testing.
 	}
 }
 
+func TestCandidateSourcesUsesOnlySessions(t *testing.T) {
+	sources := candidateSources(contracts.RepoAnalysisBundle{Sources: []contracts.RepoAnalysisSource{
+		{ID: "session", SourceType: "session"},
+		{ID: "commit", SourceType: "commit"},
+	}})
+	if len(sources) != 1 || sources["session"].ID != "session" {
+		t.Fatalf("candidate sources = %#v, want session source only", sources)
+	}
+}
+
 func TestBuildCandidateFromSourcesScoresStructuralSupport(t *testing.T) {
 	sources := map[string]contracts.RepoAnalysisSource{}
 	for i, id := range []string{"s1", "s2", "s3", "s4"} {

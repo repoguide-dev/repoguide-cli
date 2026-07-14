@@ -6,7 +6,7 @@ const feedbackTopicPromptTemplate = `You are generating a single routing topic c
 
 A coding agent has flagged a topic area and provided feedback from a coding session. Your job is to produce one compact, practical topic context object that helps future agents start work on this topic without exploring the repository from scratch.
 
-Existing topics (name → summary):
+Existing topics (id, name → summary):
 %s
 
 Suggested topic name: %s
@@ -18,6 +18,7 @@ Session data (one coding session that covered this topic):
 %s
 
 Rules:
+- If the feedback belongs to an existing topic, return {"merge_into_topic_id":"<existing id>"}. Do not create a duplicate topic.
 - Only create a new topic if the feedback describes work not covered by any existing topic.
 - Create topics per domain area. Prefer the smallest recurring domain that will help routing: broader than a single task, but narrower than a whole layer or app when the evidence supports a specific feature, workflow, page, service, integration, or business capability.
 - If you decide not to create a topic, return {"skip": "<reason>"} where reason is one of:
@@ -36,7 +37,7 @@ Rules:
 
 Return only valid JSON. No markdown, no comments.
 
-Return {"skip": "<reason>"} if the feedback should not create a new topic. Otherwise return a single JSON object:
+Return {"skip": "<reason>"} if the feedback should not create or merge a topic. Return {"merge_into_topic_id":"<existing id>"} when it belongs to an existing topic. Otherwise return a single JSON object:
 
 ` + SharedTopicOutputObject + `
 
@@ -59,6 +60,7 @@ type FeedbackTopicSessionData struct {
 
 // ExistingTopicSummary is the compact representation of an existing topic passed to the prompt.
 type ExistingTopicSummary struct {
+	ID      string `json:"id"`
 	Name    string `json:"name"`
 	Summary string `json:"summary"`
 }

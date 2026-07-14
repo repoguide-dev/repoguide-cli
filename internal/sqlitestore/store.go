@@ -396,6 +396,9 @@ func (s *topicStore) PutTopics(ctx context.Context, repoID string, topics []mode
 		return err
 	}
 	defer tx.Rollback()
+	if _, err = tx.ExecContext(ctx, `DELETE FROM topics WHERE repo_id=?`, repoID); err != nil {
+		return err
+	}
 	for _, t := range topics {
 		data, _ := json.Marshal(t)
 		_, err = tx.ExecContext(ctx,

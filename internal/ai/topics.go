@@ -130,11 +130,14 @@ func GenerateTopicContextFromFeedback(
 	events []model.SessionEvent,
 	existingTopics []model.TopicContext,
 ) (*model.TopicContext, string, Usage, error) {
+	if len(events) == 0 {
+		return nil, "no_session_evidence", Usage{}, nil
+	}
 	summary := buildFeedbackSessionSummary(events, bundle)
 	sessionJSON, _ := json.Marshal(summary)
 	existing := make([]prompts.ExistingTopicSummary, len(existingTopics))
 	for i, t := range existingTopics {
-		existing[i] = prompts.ExistingTopicSummary{Name: t.Name, Summary: t.Summary}
+		existing[i] = prompts.ExistingTopicSummary{ID: t.ID, Name: t.Name, Summary: t.Summary}
 	}
 	existingJSON, _ := json.Marshal(existing)
 	prompt := prompts.BuildFeedbackTopicPrompt(suggestedName, feedback, string(sessionJSON), string(existingJSON))
@@ -152,6 +155,25 @@ func GenerateTopicContextFromFeedback(
 	}
 	if err := json.Unmarshal([]byte(raw), &skip); err == nil && skip.Skip != "" {
 		return nil, skip.Skip, usage, nil
+	}
+	var merge struct {
+		MergeIntoTopicID string `json:"merge_into_topic_id"`
+	}
+	if err := json.Unmarshal([]byte(raw), &merge); err == nil && merge.MergeIntoTopicID != "" {
+		for _, existingTopic := range existingTopics {
+			if existingTopic.ID != merge.MergeIntoTopicID {
+				continue
+			}
+			merged := existingTopic
+			merged.Evidence.Sessions++
+			merged.Evidence.EditedFiles += len(summary.EditedFiles)
+			merged.Evidence.ReadFiles += len(summary.ReadFiles)
+			if active := lastEventDate(events); active > merged.Evidence.LastActive {
+				merged.Evidence.LastActive = active
+			}
+			return &merged, "merged", usage, nil
+		}
+		return nil, "invalid_merge_target", usage, nil
 	}
 
 	result, parseErr := parseSingleTopicResult(raw)
@@ -1008,10 +1030,9 @@ func nameTopics(ctx context.Context, candidates []topicCandidate, repoCtx string
 					return
 				}
 				named, parseErr := parseTopicResults(stripFences(raw))
-				if parseErr != nil && len(named) == 0 {
-					fallback := fallbackTopicResult(candidates[index])
-					fallback.GroupIDs = []string{group.GroupID}
-					named = []llmTopicResult{fallback}
+				if parseErr != nil {
+					results <- topicTurnResult{index: index, usage: turnUsage, err: fmt.Errorf("parse topic context for %s: %w", group.GroupID, parseErr)}
+					return
 				}
 				slog.Info("topic context turn completed", "turn", index+1, "turns", len(groups), "group_id", group.GroupID, "sources", len(group.SourceIDs), "input_tokens", turnUsage.InputTokens, "output_tokens", turnUsage.OutputTokens, "duration_ms", time.Since(started).Milliseconds())
 				results <- topicTurnResult{index: index, named: named, usage: turnUsage}
@@ -1029,7 +1050,16 @@ func nameTopics(ctx context.Context, candidates []topicCandidate, repoCtx string
 			return nil, usage, result.err
 		}
 		groupID := groupOrder[index]
-		topics = append(topics, materializeTopicContexts(result.named, groupByID, []string{groupID})...)
+		materialized := materializeTopicContexts(result.named, groupByID, []string{groupID})
+		for i := range materialized {
+			if existing, ok := existingByID[materialized[i].ID]; ok && materialized[i].Evidence.Sessions > 0 {
+				materialized[i].Confidence += (0.95 - materialized[i].Confidence) * 0.04
+				if materialized[i].Confidence < existing.Confidence {
+					materialized[i].Confidence = existing.Confidence
+				}
+			}
+		}
+		topics = append(topics, materialized...)
 	}
 	return topics, usage, nil
 }
@@ -1054,13 +1084,7 @@ func materializeTopicContexts(results []llmTopicResult, groupByID map[string]top
 		}
 
 		evidence := aggregateTopicEvidence(groupIDs, groupByID)
-		if evidence.supportLevel == "weak" {
-			if result.Confidence < 0.35 {
-				result.Confidence = 0.35
-			} else if result.Confidence > 0.49 {
-				result.Confidence = 0.49
-			}
-		} else if result.Confidence < minTopicConfidence {
+		if result.Confidence < minTopicConfidence {
 			continue
 		}
 		topicID := toID(result.Name, i)

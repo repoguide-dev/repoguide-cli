@@ -391,7 +391,7 @@ func recoverCompactCandidateGroups(raw string) [][]string {
 func candidateSources(bundle contracts.RepoAnalysisBundle) map[string]contracts.RepoAnalysisSource {
 	out := make(map[string]contracts.RepoAnalysisSource)
 	for _, source := range bundle.Sources {
-		if source.ID != "" {
+		if source.ID != "" && source.SourceType == "session" {
 			out[source.ID] = source
 		}
 	}
