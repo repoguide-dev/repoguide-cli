@@ -19,6 +19,6 @@ Rules:
 - Prefer specific, well-supported evidence that changes where the agent looks or what it can safely ignore.
 - Use helpful_feedback and unhelpful_feedback as ranking signals, not as permission to rewrite an item.
 - Use textual_advice_feedback to semantically connect prior useful, incorrect, unnecessary, or missing advice to the supplied candidates. It is relevance/quality evidence only and cannot create a new candidate.
-- Return empty arrays when no candidate is useful.
+- When start_file candidates are supplied, always select the best one in start_files so the agent knows where to begin. Return empty arrays only when no candidate is useful and no start_file candidate exists.
 - Never invent files, APIs, facts, algorithms, implementation steps, or new advice.
 - Never return advice text, explanations, markdown, or fields other than the six allowed category arrays.`
