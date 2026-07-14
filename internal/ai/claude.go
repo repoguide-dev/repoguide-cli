@@ -28,7 +28,7 @@ var useCLI bool
 var cliBackend string
 
 const anthropicVersion = "2023-06-01"
-const anthropicRequestTimeout = 5 * time.Minute
+const anthropicRequestTimeout = 15 * time.Minute
 
 var anthropicAPIURL = "https://api.anthropic.com/v1/messages"
 var anthropicHTTPClient = &http.Client{Timeout: anthropicRequestTimeout}
