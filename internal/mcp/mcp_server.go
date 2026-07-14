@@ -304,6 +304,11 @@ func handleMCPRequest(req mcpRequest, client *CloudClient) (mcpResponse, bool) {
 					InputSchema: optionalObjectSchema("task", "repo_id", "repo_path"),
 				},
 				{
+					Name:        "repoguide_get_full_topic_context",
+					Description: "Opt-in full topic, test, and search package. Use only when the compact repository experience is insufficient or the user explicitly asks for full context.",
+					InputSchema: requiredObjectSchema("topic_id", "repo_id"),
+				},
+				{
 					Name:        "repoguide_get_test_context",
 					Description: "Return test strategy for a topic: which tests to start with, test signal, and notes. Call before editing source files.",
 					InputSchema: requiredObjectSchema("topic_id", "repo_id"),
@@ -315,7 +320,7 @@ func handleMCPRequest(req mcpRequest, client *CloudClient) (mcpResponse, bool) {
 				},
 				{
 					Name:        "repoguide_get_repo_experience",
-					Description: "Primary RepoGuide entry point. Return bootstrap context for this task: likely topic, files to open first, test guidance, search guidance, and known risks. Call this once per non-trivial task/session before any other RepoGuide tool, not once per message or turn. If the first call asks for a topic, call it again with topic_id set.",
+					Description: "Primary entry point. Return calibrated task-to-topic match and a compact evidence-backed task package. It may ask for clarification when no topic matches strongly. Full topic/test/search context is opt-in.",
 					InputSchema: optionalObjectSchema("task", "repo_id", "topic_id"),
 				},
 				{
@@ -336,14 +341,16 @@ func handleMCPRequest(req mcpRequest, client *CloudClient) (mcpResponse, bool) {
 							"advice_evaluation": map[string]any{
 								"type": "object",
 								"properties": map[string]any{
-									"useful_advice":      map[string]any{"type": "string"},
-									"incorrect_advice":   map[string]any{"type": "string"},
-									"unnecessary_advice": map[string]any{"type": "string"},
-									"missing_advice":     map[string]any{"type": "string"},
-									"useful_files":       map[string]any{"type": "array", "items": map[string]any{"type": "string"}},
-									"unhelpful_files":    map[string]any{"type": "array", "items": map[string]any{"type": "string"}},
+									"useful_advice":        map[string]any{"type": "string"},
+									"incorrect_advice":     map[string]any{"type": "string"},
+									"unnecessary_advice":   map[string]any{"type": "string"},
+									"missing_advice":       map[string]any{"type": "string"},
+									"useful_files":         map[string]any{"type": "array", "items": map[string]any{"type": "string"}},
+									"unhelpful_files":      map[string]any{"type": "array", "items": map[string]any{"type": "string"}},
+									"helpful_advice_ids":   map[string]any{"type": "array", "items": map[string]any{"type": "string"}},
+									"unhelpful_advice_ids": map[string]any{"type": "array", "items": map[string]any{"type": "string"}},
 								},
-								"required":             []string{"useful_advice", "incorrect_advice", "unnecessary_advice", "missing_advice", "useful_files", "unhelpful_files"},
+								"required":             []string{"useful_advice", "incorrect_advice", "unnecessary_advice", "missing_advice", "useful_files", "unhelpful_files", "helpful_advice_ids", "unhelpful_advice_ids"},
 								"additionalProperties": false,
 							},
 							"candidate_rule": candidateRuleInputSchema(),
@@ -498,6 +505,21 @@ func callMCPTool(name string, arguments map[string]any, client *CloudClient) (ma
 		return map[string]any{
 			"text": renderSearchContext(input.TopicID, sc),
 		}, "", nil
+	case "repoguide_get_full_topic_context":
+		var input repoguideTestContextInput
+		if err := decodeToolArguments(arguments, &input); err != nil {
+			return nil, "", err
+		}
+		repoID, _ := resolveRepoContext(input.RepoID, "")
+		if repoID == "" || input.TopicID == "" {
+			return nil, "", fmt.Errorf("repo_id and topic_id required")
+		}
+		topic, err := client.GetMCPTopicContext(repoID, input.TopicID)
+		if err != nil || topic == nil {
+			return nil, "", fmt.Errorf("topic not found")
+		}
+		search, _ := client.GetMCPSearchContext(repoID, input.TopicID, "")
+		return map[string]any{"text": renderFullTopicContext(topic, search), "topic_id": input.TopicID}, "", nil
 	case "repoguide_get_repo_experience":
 		var input repoguideUnderstandTaskInput
 		if err := decodeToolArguments(arguments, &input); err != nil {
@@ -515,48 +537,29 @@ func callMCPTool(name string, arguments map[string]any, client *CloudClient) (ma
 		if result == nil {
 			return map[string]any{"text": UnderstandTaskResponse(repoID)}, "", nil
 		}
-		var clarificationCandidates []contracts.MCPTopicSummary
 		if result.Status == "needs_clarification" {
-			topics, err := client.GetMCPTopics(repoID)
-			if err != nil || len(topics) == 0 {
-				return map[string]any{"text": "Task maps to multiple topics. Call `repoguide_get_repo_experience` again with your chosen `topic_id` from `repoguide_list_topics`."}, "", nil
-			}
-			clarificationCandidates = selectCandidateTopics(topics, result.CandidateTopicIDs, 5)
-			if len(clarificationCandidates) == 1 {
-				resolved, err := client.GetMCPUnderstandTask(repoID, input.Task, clarificationCandidates[0].ID, sessionPrompts)
-				if err != nil {
-					return nil, "", fmt.Errorf("understand-task auto-select failed: %w", err)
-				}
-				if resolved != nil && resolved.Status != "needs_clarification" {
-					result = resolved
+			matches := result.CandidateTopics
+			if len(matches) == 0 {
+				topics, _ := client.GetMCPTopics(repoID)
+				for _, topic := range selectCandidateTopics(topics, result.CandidateTopicIDs, 5) {
+					matches = append(matches, contracts.TopicMatch{TopicID: topic.ID, Name: topic.Name})
 				}
 			}
+			return map[string]any{"text": renderTopicClarification(result.Reason, result.Question, matches), "candidate_topics": matches}, "", nil
 		}
-		if result.Status == "needs_clarification" {
-			var sb strings.Builder
-			sb.WriteString("Task maps to multiple topics. Call `repoguide_get_repo_experience` again with your chosen `topic_id`:\n\n")
-			for _, t := range clarificationCandidates {
-				fmt.Fprintf(&sb, "- `%s`: **%s** - %s\n", t.ID, t.Name, t.Summary)
-			}
-			return map[string]any{"text": sb.String()}, "", nil
-		}
-		text := "\n" + result.Explanation + "\n"
+		text := strings.TrimSpace(result.Explanation)
 		if result.TopicID != "" && result.ContextText != "" {
 			text += "\n\n" + result.ContextText
-			if tctx, err := client.GetMCPTopicContext(repoID, result.TopicID); err == nil && tctx != nil {
-				if rendered := renderTestContext(tctx, nil); rendered != "" {
-					text += "\n\n" + rendered + "\n"
-				}
-			}
-			if sc, err := client.GetMCPSearchContext(repoID, result.TopicID, ""); err == nil && sc != nil {
-				if rendered := renderSearchContext(result.TopicID, sc); rendered != "" {
-					text += "\n\n" + rendered
-				}
-			}
 		}
 		out := map[string]any{"text": text}
 		if result.TopicID != "" {
 			out["topic_id"] = result.TopicID
+		}
+		if result.MatchConfidence > 0 {
+			out["match_confidence"] = result.MatchConfidence
+		}
+		if len(result.SelectedAdvice) > 0 {
+			out["selected_advice"] = result.SelectedAdvice
 		}
 		return out, "", nil
 	case "repoguide_record_feedback":

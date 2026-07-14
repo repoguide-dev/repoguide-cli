@@ -28,14 +28,17 @@ const SharedTopicOutputObject = `{
     "tests": {
       "start_with": ["most relevant test files"],
       "signal": "one of the four test_touch_signal enum values",
-      "notes": ["optional: concrete notes for test strategy"],
+      "notes": ["evidence-grounded textual test advice"],
       "commands": []
     },
     "known_workflows": [
-      "actionable step derived from read_before_edit_hints or prompt patterns"
+      {"text": "short workflow summary", "steps": ["ordered observed step"], "files": ["observed/path.go"]}
+    ],
+    "scope_boundaries": [
+      {"text": "evidence-backed architecture or ownership boundary", "files": ["optional/anchor.go"]}
     ],
     "avoid_wasting_time": [
-      "concrete warning about what not to do first or what to skip"
+      {"text": "specific evidence-backed warning", "severity": "info|warning|critical", "files": ["optional/anchor.go"]}
     ],
     "risk_flags": ["applicable flags from the enum"],
     "evidence": {
@@ -54,20 +57,12 @@ const SharedFieldRules = `- name: 3-6 words, Title Case, e.g. "MCP context routi
 - important_files.test_files: from test_files input.
 - important_files.cross_cutting_files: relevant seen_with entries only.
 - tests.signal: use the pre-computed test_touch_signal value unless you have strong evidence to override it.
-- tests.notes: concrete, e.g. "Check response-shape tests before changing JSON fields." Leave empty if nothing specific.
+- tests.notes: concise textual advice grounded in test files, observed behavior, or corrections. Omit generic testing advice.
 - tests.commands: only commands copied verbatim from the commands input that run tests or validate changes, at most 3. Empty array if no such command was observed. Never invent commands.
-- known_workflows: retrieval hints only, one per distinct recurring pattern - do not restate the same hint twice. Prefer stable repo-specific facts such as correct file pairings, mirrored paths, package boundaries, canonical entry points, and distinctive terms agents should recognize. Derive from read_before_edit_hints, observed commands, prompt patterns (especially follow-up corrections), and file co-edit signals. Do not give implementation advice, sequencing advice, or generic engineering process tips. Format: short factual phrase or sentence fragment.
-- avoid_wasting_time: concrete evidence-backed pitfalls, one per distinct pitfall - do not restate the same warning twice. Derive from commands with failures (name the command and that it failed here), follow-up corrections in prompts, context_tax file labels, search friction patterns, stale paths, and irrelevant seen_with files. Be specific - name files, commands, terms, or file types when possible. Do not include broad coaching such as how to edit, test, validate, mirror changes, or structure an implementation unless the pitfall is explicitly evidenced in the input.
-- risk_flags: apply any that fit from this enum:
-  schema_sensitive (response/API/type shape often changes)
-  low_test_signal (source changes often happen without tests)
-  tests_as_spec (tests read for behavior but rarely changed)
-  search_friction (agents often search before finding files)
-  high_context_cost (this topic tends to burn many tokens)
-  cross_subsystem (changes often span directories)
-  config_coupled (config files often co-occur)
-  doc_driven (docs/instructions often read before edits)
-  generated_or_snapshot_adjacent (nearby generated/snapshot files may distract)
+- known_workflows: structured reusable workflows. text summarizes the pattern; steps preserve a useful observed sequence; files contain only paths present in the topic evidence. Omit steps when evidence supports only a textual observation.
+- scope_boundaries: durable, evidence-backed ownership or architecture limits. Include file anchors when present.
+- avoid_wasting_time: concrete warnings grounded in failed commands, corrections, context-tax files, stale paths, or repeated wrong starts. severity must be info, warning, or critical.
+- risk_flags: compact evidence-backed labels such as schema_sensitive, low_test_signal, tests_as_spec, search_friction, high_context_cost, cross_subsystem, config_coupled, doc_driven, or generated_or_snapshot_adjacent.
 - when_to_use: 2-4 items, each <= 80 characters.
 - prompt_keywords: 3-8 lowercase keywords or short phrases from the prompts. Drop noisy command words and malformed fragments.
 - evidence.reason: <= 180 characters.
@@ -85,16 +80,20 @@ const topicPromptRepoCtxTemplate = `Repository context (file structure and docs)
 
 const topicPromptTemplate = `You are generating routing topics from coding agent session telemetry for one software repository.
 
-Each group contains sessions that mostly edited files in the same directory or nearby file cluster.
-Your job is to infer the developer-facing work topics and produce compact, practical context objects that help future agents start work without exploring the repository from scratch.
+Each group is a pre-validated topic candidate assembled from semantically related sessions, commits, or pull requests. File evidence was collected only after that grouping step.
+Your job is to name each candidate and produce one compact, practical context object that helps future agents start work without exploring the repository from scratch.
 
 Input fields per group:
 - group_id: stable identifier that you must reference in output
+- existing_topic_id/name/summary: present when discovery assigned these sources to an existing topic; preserve that topic's scope and improve its context from this evidence
+- source_ids: the sessions, commits, and pull requests supporting this candidate
+- support_level: strong, supported, or weak; weak candidates must remain below 0.50 confidence
+- repeated_edited_files: structural anchors edited by at least two independent sources
 - directory_hint: primary directory edited in these sessions
 - session_count: how many sessions touched this group
 - last_active: date of the most recent session in this group - older groups are more likely to contain stale file paths
-- prompts: actual user messages, most recent sessions first - primary signal for naming and retrieval hints. Later prompts within a session are often corrections of what the agent got wrong; treat corrections as strong evidence for file routing, terminology, boundaries, and avoid_wasting_time.
-- commands: shell commands agents actually ran in these sessions, with run and failure counts. Repeated successful commands are weak evidence unless they reveal a specific canonical entry point or validation command; commands with failures are stronger avoid_wasting_time evidence.
+- prompts: actual user messages, most recent sessions first - primary signal for naming, routing, and choosing observed files. Later corrections can narrow the intended domain.
+- commands: shell commands agents actually ran in these sessions, with run and failure counts. Use exact observed commands only; failures may support specific warnings.
 - top_edited_files: files most frequently written
 - top_read_files: files most frequently read (often reference/schema files)
 - test_files: test files associated with this directory
@@ -105,12 +104,10 @@ Input fields per group:
 - read_before_edit_hints: observed patterns where one file is read before another is edited
 
 Important rules:
-- Return as many topics as the evidence supports - do not target a topic count. Emit every distinct recurring work area you can see, and no topic you cannot ground in the input.
-- Skip groups entirely if you are not confident they represent a distinct recurring workflow.
-- When session_count is 0, infer topics from file names, types, and the repository context above instead of prompts.
-- You may merge multiple related groups into one topic when prompts and files clearly point to the same recurring work.
-- You may also split one input group into multiple topics when the prompts, files, or workflows show distinct recurring areas within the same directory. Reuse the same group_id across those topics only when each topic has a clearly different focus.
-- Every topic object must include group_ids with one or more input group_id values.
+- Return exactly one topic object per input group and keep the same order.
+- This turn normally contains one group and only that group's supporting sources plus compact repository context.
+- Do not merge groups or split a group; candidate discovery already made that decision from all sources.
+- Every topic object must include group_ids with exactly that input group_id.
 - Keep output order aligned to the first referenced group_id for each topic.
 - Do not invent files not present in the input data.
 - Use the whole group/bundle context when selecting files for a topic. Relevant files may come from top_edited_files, top_read_files, test_files, seen_with, file_labels, and read_before_edit_hints across the group, not only from the most obvious prompt wording.
@@ -118,18 +115,18 @@ Important rules:
 - Prefer evidence from recent sessions (see last_active and prompt order) over older sessions when they conflict.
 - Prefer developer intent from prompts over directory names.
 - seen_with entries are candidates for cross_cutting_files: include them if relevant, skip if incidental.
+- Do not use a layer bucket (for example "Cloud Web App Pages", "Cloud Backend API and Auth", or "CLI Commands and Init Flow") as the final topic name when the group contains two or more recurring named domains. Split it into those domains instead. A broad layer bucket is permitted only when the evidence truly has no narrower recurring intent.
 - If you are unsure, omit the topic instead of inventing a generic one.
 - Ignore repeated command-like strings, corrupted prompt fragments, obvious tool noise, and low-signal identifiers unless reinforced by file evidence.
 - Treat this as retrieval, not coaching. The goal is to help an agent orient quickly with repository-specific experience, not to tell it how to implement the task.
 - Prefer repo-specific nouns over advice: file paths, package names, mirrored modules, APIs, commands that actually failed, and distinctive terms from prompts are higher value than general instructions.
 - Only include guidance that is clearly supported by repeated evidence in prompts, commands, or file patterns. If a statement would still sound plausible in many unrelated repositories, it is probably too generic - omit it.
 - Do not output generic process advice such as "start with", "before editing", "run tests from", "update X first", "manually mirror changes", or "use git diff" unless that exact constraint is evidenced by the input as a recurring repo-specific pitfall.
-- For known_workflows and avoid_wasting_time, prioritize unique corrections from prior sessions: wrong file family, stale path, wrong package, wrong term, wrong command, or missing cross-cutting file.
-- It is better to return fewer, sharper hints than a padded topic full of plausible-sounding advice.
+- You may author evidence-grounded textual advice, structured workflows, scope boundaries, and warnings. Every file, step, command, and claim must be traceable to the supplied topic evidence; omit anything merely plausible.
 - Create topics per domain area: each topic should map to one recurring business/domain concept, feature area, workflow, integration, or service boundary that an agent would intentionally choose.
 - Topic names must describe a recurring kind of work, not a folder name.
 - Prefer area-focused topics over layer buckets: name the concrete feature, workflow, page, service, or integration, not "frontend", "backend", "UI", or the whole app area.
-- If one directory contains multiple recurring features, split them by developer intent and touched files instead of collapsing them into one broad layer topic.
+- Candidate groups already separate recurring features within a directory; preserve that boundary.
 - If two sets of sessions touch the same layer but different domains, create separate topics for those domains rather than one combined layer topic.
 - For each domain topic, use the surrounding group/bundle evidence to pull in the larger relevant file context: include neighboring schema, shared state, validators, tests, and cross-cutting files when they materially support the domain.
 - Avoid vague names like "Backend updates", "CLI changes", "Code improvements".
@@ -139,11 +136,11 @@ Important rules:
 
 Return only valid JSON. No markdown, no comments.
 
-Return a JSON array. Each object represents one topic and may reference one or more groups:
+Return a JSON array. Each object represents exactly one input group:
 
 [
   {
-    "group_ids": ["backend_server", "backend_model"],
+    "group_ids": ["candidate_1"],
     "name": "concise topic name, 3-6 words",
     "summary": "one sentence explaining what work this topic covers",
     "confidence": 0.88,
@@ -167,14 +164,17 @@ Return a JSON array. Each object represents one topic and may reference one or m
     "tests": {
       "start_with": ["most relevant test files"],
       "signal": "one of the four test_touch_signal enum values",
-      "notes": ["optional: concrete notes for test strategy"],
+      "notes": ["evidence-grounded textual test advice"],
       "commands": []
     },
     "known_workflows": [
-      "actionable step derived from read_before_edit_hints or prompt patterns"
+      {"text": "short workflow summary", "steps": ["ordered observed step"], "files": ["observed/path.go"]}
+    ],
+    "scope_boundaries": [
+      {"text": "evidence-backed architecture or ownership boundary", "files": ["optional/anchor.go"]}
     ],
     "avoid_wasting_time": [
-      "concrete warning about what not to do first or what to skip"
+      {"text": "specific evidence-backed warning", "severity": "info|warning|critical", "files": ["optional/anchor.go"]}
     ],
     "risk_flags": ["applicable flags from the enum"],
     "evidence": {
@@ -185,7 +185,7 @@ Return a JSON array. Each object represents one topic and may reference one or m
 ]
 
 Field rules:
- - group_ids: 1+ input group_id values. Reuse a group_id across multiple topics only when the same directory truly contains multiple distinct recurring areas; otherwise use each input group once.
+ - group_ids: exactly one input group_id; use each input group exactly once.
 ` + SharedFieldRules + `
 
 ` + SharedNamingExamples + `

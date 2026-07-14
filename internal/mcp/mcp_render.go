@@ -5,6 +5,8 @@ import (
 	"path/filepath"
 	"regexp"
 	"strings"
+
+	"github.com/repoguide/repoguide-core/contracts/v1"
 )
 
 // renderBootstrapContext produces the text shown to the agent after topic selection.
@@ -63,15 +65,17 @@ func renderBootstrapContext(ctx *MCPTopicContext, maxFiles int) string {
 	}
 
 	if len(ctx.KnownWorkflows) > 0 {
-		sb.WriteString("\nPrior workflow: ")
-		sb.WriteString(strings.Join(ctx.KnownWorkflows, "; "))
-		sb.WriteString(".\n")
+		sb.WriteString("\nPrior workflows:\n")
+		for _, item := range ctx.KnownWorkflows {
+			fmt.Fprintf(&sb, "- %s\n", item.Text)
+		}
 	}
 
 	if len(ctx.AvoidWastingTime) > 0 {
-		sb.WriteString("\nAvoid: ")
-		sb.WriteString(strings.Join(ctx.AvoidWastingTime, "; "))
-		sb.WriteString(".\n")
+		sb.WriteString("\nAvoid:\n")
+		for _, item := range ctx.AvoidWastingTime {
+			fmt.Fprintf(&sb, "- %s\n", item.Text)
+		}
 	}
 
 	return strings.TrimRight(sb.String(), "\n")
@@ -115,7 +119,13 @@ func renderTestContext(ctx *MCPTopicContext, files []string) string {
 	if len(ctx.Tests.Notes) > 0 {
 		sb.WriteString("\nNotes:\n")
 		for _, n := range ctx.Tests.Notes {
-			fmt.Fprintf(&sb, "- %s\n", n)
+			fmt.Fprintf(&sb, "- %s\n", n.Text)
+		}
+	}
+	if len(ctx.Tests.Commands) > 0 {
+		sb.WriteString("\nObserved validation commands:\n")
+		for _, command := range ctx.Tests.Commands {
+			fmt.Fprintf(&sb, "- %s\n", command)
 		}
 	}
 
@@ -139,6 +149,104 @@ func renderTestContext(ctx *MCPTopicContext, files []string) string {
 	}
 
 	return strings.TrimRight(sb.String(), "\n")
+}
+
+func renderTopicClarification(reason, question string, matches []contracts.TopicMatch) string {
+	var sb strings.Builder
+	sb.WriteString("Task-to-topic match\n")
+	for _, match := range matches {
+		name := match.Name
+		if name == "" {
+			name = match.TopicID
+		}
+		if match.Confidence > 0 {
+			fmt.Fprintf(&sb, "- %.0f%% %s (`%s`)\n", match.Confidence*100, name, match.TopicID)
+		} else {
+			fmt.Fprintf(&sb, "- %s (`%s`)\n", name, match.TopicID)
+		}
+	}
+	if strings.TrimSpace(reason) != "" {
+		fmt.Fprintf(&sb, "\n%s\n", strings.TrimSpace(reason))
+	}
+	if strings.TrimSpace(question) == "" {
+		question = "Which topic should RepoGuide use?"
+	}
+	fmt.Fprintf(&sb, "\n%s Call `repoguide_get_repo_experience` again with the chosen `topic_id`.", strings.TrimSpace(question))
+	return strings.TrimSpace(sb.String())
+}
+
+// renderFullTopicContext is the explicit escape hatch for the complete stored
+// topic, test, and search package. The default task route never calls it.
+func renderFullTopicContext(ctx *MCPTopicContext, search *MCPSearchContext) string {
+	var sb strings.Builder
+	fmt.Fprintf(&sb, "Full topic context: %s\nSummary: %s\n", ctx.Name, ctx.Summary)
+	if len(ctx.WhenToUse) > 0 {
+		sb.WriteString("\nWhen to use\n")
+		for _, item := range ctx.WhenToUse {
+			fmt.Fprintf(&sb, "- %s\n", item)
+		}
+	}
+	if len(ctx.PromptKeywords) > 0 {
+		fmt.Fprintf(&sb, "\nPrompt keywords\n- %s\n", strings.Join(ctx.PromptKeywords, ", "))
+	}
+	if len(ctx.StartHere) > 0 {
+		sb.WriteString("\nStart here\n")
+		for _, file := range ctx.StartHere {
+			fmt.Fprintf(&sb, "- %s", file.Path)
+			if file.Role != "" {
+				fmt.Fprintf(&sb, " — %s", file.Role)
+			}
+			if file.Why != "" {
+				fmt.Fprintf(&sb, ": %s", file.Why)
+			}
+			sb.WriteByte('\n')
+		}
+	}
+	renderPaths := func(heading string, paths []string) {
+		if len(paths) == 0 {
+			return
+		}
+		fmt.Fprintf(&sb, "\n%s\n", heading)
+		for _, path := range paths {
+			fmt.Fprintf(&sb, "- %s\n", path)
+		}
+	}
+	renderPaths("Edit targets", ctx.ImportantFiles.EditTargets)
+	renderPaths("Reference files", ctx.ImportantFiles.ReferenceFiles)
+	renderPaths("Test files", ctx.ImportantFiles.TestFiles)
+	renderPaths("Cross-cutting files", ctx.ImportantFiles.CrossCuttingFiles)
+	renderGuidance := func(heading string, items []contracts.MCPTopicGuidanceItem) {
+		if len(items) == 0 {
+			return
+		}
+		fmt.Fprintf(&sb, "\n%s\n", heading)
+		for _, item := range items {
+			fmt.Fprintf(&sb, "- [%s] %s", item.ID, item.Text)
+			if item.Severity != "" {
+				fmt.Fprintf(&sb, " [%s]", item.Severity)
+			}
+			fmt.Fprintf(&sb, " (support %d, confidence %.0f%%)\n", item.SupportCount, item.Confidence*100)
+			for _, step := range item.Steps {
+				fmt.Fprintf(&sb, "  - %s\n", step)
+			}
+			if len(item.Files) > 0 {
+				fmt.Fprintf(&sb, "  Files: %s\n", strings.Join(item.Files, ", "))
+			}
+		}
+	}
+	renderGuidance("Workflows", ctx.KnownWorkflows)
+	renderGuidance("Avoid", ctx.AvoidWastingTime)
+	renderGuidance("Scope boundaries", ctx.ScopeBoundaries)
+	renderGuidance("Risks", ctx.RiskFlags)
+	if tests := renderTestContext(ctx, nil); tests != "" {
+		sb.WriteString("\n\n" + tests)
+	}
+	if search != nil {
+		if rendered := renderSearchContext(ctx.ID, search); rendered != "" {
+			sb.WriteString("\n\n" + rendered)
+		}
+	}
+	return strings.TrimSpace(sb.String())
 }
 
 // renderSearchContext produces search guidance text.

@@ -17,8 +17,8 @@ Each feedback may contain advice_evaluation and one candidate_rule proposed by t
 
 Session-evidence rules:
 - Any file you suggest must appear in the session data, the feedback text, or the existing topic - never invent paths.
-- A follow-up prompt that corrects the agent ("no - do X instead") is strong evidence for a known_workflow or avoid_wasting_time entry.
-- Commands come only from session data. A command that failed in the session is avoid_wasting_time evidence when the failure looks repeatable rather than task-specific.
+- A follow-up prompt that corrects the agent ("no - do X instead") may support routing, textual advice, a structured workflow, or a warning.
+- Commands and failures may support advice only when they appear in the session evidence.
 - Use diff snippets as supporting evidence in addition to feedback recommendations; prefer observed code changes over speculation when they clarify what was actually fixed.
 - Prefer suggestions supported by both the feedback text and the session data over ones supported by only one.
 
@@ -26,9 +26,9 @@ Topic context is durable, task-routing and navigation guidance shared with futur
 
 Only create or accept suggestions that would help a future agent:
 - choose this topic for the right task,
-- start in the right file/function,
-- understand a recurring workflow,
-- or avoid a repeated mistake.
+- identify the right observed file/function,
+- follow a recurring workflow,
+- or avoid an evidenced wrong path.
 
 Do not rewrite the topic.
 Do not change id, name, summary, confidence, or evidence.
@@ -44,6 +44,7 @@ Allowed fields:
 - important_files.reference_files
 - important_files.cross_cutting_files
 - known_workflows
+- scope_boundaries
 - avoid_wasting_time
 - risk_flags
 
@@ -52,6 +53,7 @@ Suggestion kinds:
 - update_start_here_reason
 - add_important_file
 - add_known_workflow
+- add_scope_boundary
 - add_avoid_wasting_time
 - add_prompt_keyword
 - add_when_to_use
@@ -72,8 +74,9 @@ Placement rules:
 - important_files.edit_targets = files future agents are likely to edit
 - important_files.reference_files = files needed to understand contracts, interfaces, patterns, or behavior
 - important_files.cross_cutting_files = files affecting multiple subsystems/topics
-- known_workflows = reusable investigation/editing sequences
-- avoid_wasting_time = repeated wrong starts or misleading paths
+- known_workflows = structured workflows with text, optional ordered steps, and observed file anchors
+- scope_boundaries = durable ownership or architecture limits
+- avoid_wasting_time = specific warnings with optional severity and observed file anchors
 - risk_flags = compact labels only
 
 Removal rules:
@@ -93,7 +96,6 @@ Review rules for pending/legacy suggestions:
 
 Limits:
 - max 3 new_suggestions per run
-- max 1 new known_workflow per distinct claim
 - max 3 new prompt_keywords per run
 - prefer update/move over duplicate add
 - weak evidence should be skipped or confidence <=3
@@ -104,7 +106,7 @@ Return strict JSON only:
   "topic_id": "string",   // pass through from input
   "new_suggestions": [
     {
-      "kind": "add_start_here | update_start_here_reason | add_important_file | add_known_workflow | add_avoid_wasting_time | add_prompt_keyword | add_when_to_use | add_risk_flag | remove_item",
+      "kind": "add_start_here | update_start_here_reason | add_important_file | add_known_workflow | add_scope_boundary | add_avoid_wasting_time | add_prompt_keyword | add_when_to_use | add_risk_flag | remove_item",
       "target_field": "string",            // dotted field path, e.g. "important_files.edit_targets"; omit if not applicable
       "path": "string or null",            // file path for file-oriented kinds; null otherwise
       "value": {},                         // item to add/update/remove - shape varies by kind (see below)
@@ -122,9 +124,10 @@ Return strict JSON only:
   // value shapes by kind:
   //   add_when_to_use           -> "string"
   //   add_prompt_keyword         -> "string"
-  //   add_known_workflow         -> "string"
-  //   add_avoid_wasting_time     -> "string"
-  //   add_risk_flag              -> "string" (the flag label)
+  //   add_known_workflow         -> { "text": "string", "steps": ["string"], "files": ["observed/path"] }
+  //   add_scope_boundary         -> { "text": "string", "files": ["optional/observed/path"] }
+  //   add_avoid_wasting_time     -> { "text": "string", "severity": "info|warning|critical", "files": ["optional/observed/path"] }
+  //   add_risk_flag              -> "string"
   //   add_start_here             -> { "path": "string", "why": "string" }
   //   update_start_here_reason   -> { "why": "string" }  (path goes in the "path" field)
   //   add_important_file         -> "string" (file path; target_field selects the sublist)

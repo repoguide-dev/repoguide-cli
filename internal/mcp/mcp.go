@@ -11,7 +11,7 @@ import (
 
 // hintVersion is the version of the MCP instruction text embedded in the CLI.
 // Increment whenever AgentInstructionBriefFor or AgentInstructionFor changes.
-const hintVersion = 5
+const hintVersion = 6
 
 func hintVersionPath() string { return filepath.Join(RepoGuideDir(), "hints_version") }
 
@@ -63,7 +63,7 @@ func AgentInstructionBriefFor(repoID string) string {
 		"`repoguide_get_repo_experience({ \"task\": \"<copy the user's latest request exactly>\", \"repo_id\": \"" + repoID + "\" })`\n\n" +
 		"Skip only when the request is clearly not about repository code, or when the user explicitly says not to use RepoGuide.\n\n" +
 		"Default to one repoguide_get_repo_experience call per task/session. Do not repeat it on every user message or turn. Call again only when the task changes materially, the first route proves wrong, or the RepoGuide response explicitly requests necessary follow-up detail.\n\n" +
-		"Treat the result as routing guidance, not permanent session context. Extract the relevant topic, files, pitfalls, and next checks, then verify against the current source.\n\n" +
+		"The default response is compact: task-to-topic match plus selected behavioral evidence. Call `repoguide_get_full_topic_context` only when that package is insufficient.\n\n" +
 		"<!-- /repoguide:mcp-instruction -->\n"
 }
 
@@ -77,10 +77,11 @@ func UnderstandTaskResponse(repoID string) string {
 	return "RepoGuide MCP workflow for this repository (repo_id: \"" + id + "\"):\n\n" +
 		"Start here once per task/session for any non-trivial coding task, not once per message or turn:\n" +
 		"`repoguide_get_repo_experience` with `{ \"task\": \"<your task>\", \"repo_id\": \"" + id + "\" }`\n\n" +
-		"It returns bootstrap context for the task: orientation, likely topic, files to open first, test guidance, search guidance, and known risks.\n\n" +
+		"It returns a calibrated task-to-topic match and a compact package selected from evidence-backed repository experience.\n\n" +
 		"If the response asks for a `topic_id`, call `repoguide_get_repo_experience` again with that `topic_id` before broad repo search or edits.\n\n" +
 		"Other tools are follow-ups, not the entry point:\n" +
 		"- `repoguide_list_topics` when you need candidate topics\n" +
+		"- `repoguide_get_full_topic_context` when the compact package is insufficient\n" +
 		"- `repoguide_get_test_context` when you need deeper test strategy for a chosen topic\n" +
 		"- `repoguide_get_search_context` when you need reliable search queries for a chosen topic\n" +
 		"- `repoguide_record_feedback` before ending every non-trivial repository task, including useful/unhelpful files and one candidate rule\n\n" +
@@ -109,7 +110,7 @@ Call ` + "`repoguide_get_repo_experience`" + ` when repo-specific context would 
 
 Default to at most one RepoGuide call per task/session. Do not repeat it on every user message or turn. Make another call only when the task changes materially, the initial route is wrong, or the response explicitly asks for necessary follow-up detail.
 
-Treat the response as routing guidance, not permanent session context. Extract the useful topic, files, workflows, risks, tests, and search queries, then verify against the current source before changing behavior.
+The default response contains a calibrated topic match and a compact selection of evidence-backed repository experience. Call ` + "`repoguide_get_full_topic_context`" + ` only when the compact package is insufficient, then verify relevant evidence against the current source.
 
 If RepoGuide is unavailable, proceed without it:
 - 401/403: tell the user to run ` + "`repoguide login`" + ` and retry
@@ -371,7 +372,7 @@ func ClearMCPConfig() error {
 func agentFeedbackInstructionBody(repoID string) string {
 	return "## RepoGuide feedback\n\n" +
 		"**Always** call this after completing any non-trivial repository task - specifically after committing changes or when the task is done. Do this even if RepoGuide guidance was skipped or unavailable; the session can still contribute a reusable rule:\n\n" +
-		"Evaluate the guidance for the selected topic: what advice was useful, incorrect, unnecessary, or missing. Name the specific repository files that were useful and the files that were irrelevant or misleading. Then propose exactly one reusable repository rule that would save the most time on a similar task. Structure the rule with when it applies, session evidence, exceptions, confidence (1-5), expected benefit, file anchors, and broader symbol/directory/topic/task-pattern scope. If no file was useful or unhelpful, use an empty list.\n\n" +
+		"Evaluate the selected guidance: include the stable advice IDs that were helpful or unhelpful, explain what was incorrect, unnecessary, or missing, and name useful or misleading files. Then propose exactly one reusable repository rule that would save time on a similar task. If no advice ID or file applies, use an empty list.\n\n" +
 		"Call `repoguide_record_feedback` with the existing quality fields plus `advice_evaluation` and `candidate_rule`. The proposed rule is stored as a candidate; it does not become guidance until later sessions, repository evidence, or developer feedback corroborate it.\n\n" +
 		"This is how RepoGuide learns which topic guidance and file anchors are useful. Do not skip this step even if RepoGuide provided little help - that signal matters too.\n\n" +
 		"**Call immediately** (before proceeding further) if: the topic was not found, the wrong topic was selected, or the context was not helpful at all. Use `stars: 1`, `helpfulness: \"none\"`, and describe what was missing in `missing_context`. Early feedback lets RepoGuide self-correct before wasting more context on the wrong path.\n"
@@ -387,7 +388,7 @@ func AgentFeedbackInstructionFor(repoID string) string {
 // AgentFeedbackHookReasonFor returns the plain-text feedback instruction shown
 // by Claude Code's Stop hook.
 func AgentFeedbackHookReasonFor(repoID string) string {
-	return "Before finishing, call `repoguide_record_feedback`: evaluate the selected topic's advice, name useful and unhelpful files, and propose one structured reusable candidate rule."
+	return "Before finishing, call `repoguide_record_feedback`: identify helpful and unhelpful selected advice IDs, name useful and misleading files, and propose one structured reusable candidate rule."
 }
 
 // InjectFeedbackInstruction appends (or replaces) the feedback block in

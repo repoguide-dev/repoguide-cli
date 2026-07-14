@@ -5,11 +5,13 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"log/slog"
 	"os"
 	"path/filepath"
 	"sort"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/repoguide/repoguide-cli/internal/ai/prompts"
 	"github.com/repoguide/repoguide-core/contracts/v1"
@@ -24,7 +26,7 @@ const maxSessionPrompts = 20
 const promptsPerSession = 3
 
 const (
-	topicModel         = "claude-sonnet-4-6"
+	topicModel         = "claude-sonnet-5"
 	minSessions        = 1
 	minTopicConfidence = 0.30
 )
@@ -41,6 +43,7 @@ type commandEntry struct {
 }
 
 type topicCandidate struct {
+	candidateID         string
 	subsystem           contracts.RepoAnalysisSubsystem
 	prompts             []string
 	commands            []commandEntry
@@ -52,21 +55,48 @@ type topicCandidate struct {
 	fileClassifications map[string][]string
 	readBeforeEditHints []string
 	testTouchSignal     string
+	sourceIDs           []string
+	repeatedEditedFiles []string
+	independentAuthors  int
+	supportLevel        string
+	existingTopicID     string
 }
 
 // DeriveTopicsAndGenerateContext derives named TopicContext entries from a RepoAnalysisBundle.
-func DeriveTopicsAndGenerateContext(ctx context.Context, bundle contracts.RepoAnalysisBundle, docs map[string]string) ([]model.TopicContext, Usage, error) {
-	candidates := buildCandidates(bundle)
-	candidates = filterAndRank(candidates)
-	repoCtx := buildRepoFileContext(bundle.Repo.Root, recentPrompts(bundle.Sessions, 50))
-	repoCtx = appendSharedDocs(repoCtx, docs)
-	if len(candidates) == 0 {
-		candidates = buildFileStructureCandidates(bundle.Repo.Root)
-		if len(candidates) == 0 {
-			return nil, Usage{}, nil
-		}
+func DeriveTopicsAndGenerateContext(ctx context.Context, bundle contracts.RepoAnalysisBundle, docs map[string]string, existingTopics []model.TopicContext) ([]model.TopicContext, Usage, error) {
+	candidates, discoveryUsage, err := discoverTopicCandidates(ctx, bundle, existingTopics)
+	if err != nil {
+		return nil, discoveryUsage, err
 	}
-	return nameTopics(ctx, candidates, repoCtx)
+	if len(candidates) == 0 {
+		return nil, discoveryUsage, nil
+	}
+	topics, namingUsage, err := nameTopics(ctx, candidates, compactTopicRepoContext(bundle, docs), existingTopics)
+	return topics, mergeUsage(discoveryUsage, namingUsage), err
+}
+
+func compactTopicRepoContext(bundle contracts.RepoAnalysisBundle, docs map[string]string) string {
+	summaryJSON, _ := json.Marshal(bundle.Summary)
+	var text strings.Builder
+	fmt.Fprintf(&text, "Repository: %s\nTelemetry summary: %s", bundle.Repo.Name, summaryJSON)
+	keys := make([]string, 0, len(docs))
+	for name := range docs {
+		keys = append(keys, name)
+	}
+	sort.Strings(keys)
+	remaining := 2500
+	for _, name := range keys {
+		content := strings.TrimSpace(docs[name])
+		if content == "" || remaining <= 0 {
+			continue
+		}
+		if len(content) > remaining {
+			content = content[:remaining]
+		}
+		fmt.Fprintf(&text, "\n\n%s:\n%s", name, content)
+		remaining -= len(content)
+	}
+	return text.String()
 }
 
 func appendSharedDocs(repoCtx string, docs map[string]string) string {
@@ -132,8 +162,10 @@ func GenerateTopicContextFromFeedback(
 		result.Confidence = minTopicConfidence
 	}
 
+	topicID := toID(result.Name, 0)
+	evidence := model.TopicEvidence{Sessions: 1, EditedFiles: len(summary.EditedFiles), ReadFiles: len(summary.ReadFiles), LastActive: lastEventDate(events)}
 	topic := model.TopicContext{
-		ID:             toID(result.Name, 0),
+		ID:             topicID,
 		Name:           result.Name,
 		Summary:        result.Summary,
 		Confidence:     result.Confidence,
@@ -149,19 +181,16 @@ func GenerateTopicContextFromFeedback(
 		Tests: model.TopicTests{
 			StartWith: result.Tests.StartWith,
 			Signal:    result.Tests.Signal,
-			Notes:     result.Tests.Notes,
+			Notes:     textGuidanceItems(topicID, "tests.notes", result.Tests.Notes, result.Confidence, evidence),
 			Commands:  result.Tests.Commands,
 		},
-		KnownWorkflows:   result.KnownWorkflows,
-		AvoidWastingTime: result.AvoidWastingTime,
-		RiskFlags:        result.RiskFlags,
-		Evidence: model.TopicEvidence{
-			Sessions:    1,
-			EditedFiles: len(summary.EditedFiles),
-			ReadFiles:   len(summary.ReadFiles),
-			LastActive:  lastEventDate(events),
-		},
+		ScopeBoundaries:  guidanceItems(topicID, "scope_boundaries", result.ScopeBoundaries, result.Confidence, evidence),
+		KnownWorkflows:   guidanceItems(topicID, "known_workflows", result.KnownWorkflows, result.Confidence, evidence),
+		AvoidWastingTime: guidanceItems(topicID, "avoid_wasting_time", result.AvoidWastingTime, result.Confidence, evidence),
+		RiskFlags:        textGuidanceItems(topicID, "risk_flags", result.RiskFlags, result.Confidence, evidence),
+		Evidence:         evidence,
 	}
+	model.EnsureTopicProvenance(&topic)
 	return &topic, "", usage, nil
 }
 
@@ -831,20 +860,26 @@ func topicScore(c topicCandidate) float64 {
 }
 
 type llmTopicGroup struct {
-	GroupID             string              `json:"group_id"`
-	DirectoryHint       string              `json:"directory_hint"`
-	SessionCount        int                 `json:"session_count"`
-	LastActive          string              `json:"last_active,omitempty"`
-	Prompts             []string            `json:"prompts"`
-	Commands            []commandEntry      `json:"commands,omitempty"`
-	TopEditedFiles      []string            `json:"top_edited_files"`
-	TopReadFiles        []string            `json:"top_read_files,omitempty"`
-	TestFiles           []string            `json:"test_files,omitempty"`
-	SeenWith            []seenWithEntry     `json:"seen_with,omitempty"`
-	SubsystemLabels     []string            `json:"subsystem_labels,omitempty"`
-	FileLabels          map[string][]string `json:"file_labels,omitempty"`
-	TestTouchSignal     string              `json:"test_touch_signal,omitempty"`
-	ReadBeforeEditHints []string            `json:"read_before_edit_hints,omitempty"`
+	GroupID              string              `json:"group_id"`
+	ExistingTopicID      string              `json:"existing_topic_id,omitempty"`
+	ExistingTopicName    string              `json:"existing_topic_name,omitempty"`
+	ExistingTopicSummary string              `json:"existing_topic_summary,omitempty"`
+	SourceIDs            []string            `json:"source_ids"`
+	SupportLevel         string              `json:"support_level"`
+	RepeatedEditedFiles  []string            `json:"repeated_edited_files,omitempty"`
+	DirectoryHint        string              `json:"directory_hint"`
+	SessionCount         int                 `json:"session_count"`
+	LastActive           string              `json:"last_active,omitempty"`
+	Prompts              []string            `json:"prompts"`
+	Commands             []commandEntry      `json:"commands,omitempty"`
+	TopEditedFiles       []string            `json:"top_edited_files"`
+	TopReadFiles         []string            `json:"top_read_files,omitempty"`
+	TestFiles            []string            `json:"test_files,omitempty"`
+	SeenWith             []seenWithEntry     `json:"seen_with,omitempty"`
+	SubsystemLabels      []string            `json:"subsystem_labels,omitempty"`
+	FileLabels           map[string][]string `json:"file_labels,omitempty"`
+	TestTouchSignal      string              `json:"test_touch_signal,omitempty"`
+	ReadBeforeEditHints  []string            `json:"read_before_edit_hints,omitempty"`
 }
 
 type llmStartFile struct {
@@ -867,6 +902,23 @@ type llmTests struct {
 	Commands  []string `json:"commands,omitempty"`
 }
 
+type llmGuidanceItem struct {
+	Text     string   `json:"text"`
+	Steps    []string `json:"steps,omitempty"`
+	Files    []string `json:"files,omitempty"`
+	Severity string   `json:"severity,omitempty"`
+}
+
+func (item *llmGuidanceItem) UnmarshalJSON(data []byte) error {
+	var text string
+	if err := json.Unmarshal(data, &text); err == nil {
+		item.Text = text
+		return nil
+	}
+	type plain llmGuidanceItem
+	return json.Unmarshal(data, (*plain)(item))
+}
+
 type llmTopicResult struct {
 	GroupIDs         []string          `json:"group_ids,omitempty"`
 	Name             string            `json:"name"`
@@ -877,88 +929,147 @@ type llmTopicResult struct {
 	StartHere        []llmStartFile    `json:"start_here"`
 	ImportantFiles   llmImportantFiles `json:"important_files"`
 	Tests            llmTests          `json:"tests"`
-	KnownWorkflows   []string          `json:"known_workflows"`
-	AvoidWastingTime []string          `json:"avoid_wasting_time"`
+	KnownWorkflows   []llmGuidanceItem `json:"known_workflows"`
+	AvoidWastingTime []llmGuidanceItem `json:"avoid_wasting_time"`
 	RiskFlags        []string          `json:"risk_flags"`
+	ScopeBoundaries  []llmGuidanceItem `json:"scope_boundaries,omitempty"`
 	Evidence         struct {
 		Reason                string   `json:"reason"`
 		RepresentativePrompts []string `json:"representative_prompts"`
 	} `json:"evidence"`
 }
 
-func nameTopics(ctx context.Context, candidates []topicCandidate, repoCtx string) ([]model.TopicContext, Usage, error) {
+func nameTopics(ctx context.Context, candidates []topicCandidate, repoCtx string, existingTopics []model.TopicContext) ([]model.TopicContext, Usage, error) {
 	groups := make([]llmTopicGroup, 0, len(candidates))
 	groupByID := make(map[string]topicCandidate, len(candidates))
 	groupOrder := make([]string, 0, len(candidates))
+	existingByID := make(map[string]model.TopicContext, len(existingTopics))
+	for _, topic := range existingTopics {
+		existingByID[topic.ID] = topic
+	}
 	for _, c := range candidates {
-		groupID := toID(c.subsystem.Name, len(groupOrder))
+		groupID := toID(c.candidateID, len(groupOrder))
+		if c.candidateID == "" {
+			groupID = toID(c.subsystem.Name, len(groupOrder))
+		}
 		fileLabels := c.fileClassifications
 		if len(fileLabels) == 0 {
 			fileLabels = nil
 		}
 		groupByID[groupID] = c
 		groupOrder = append(groupOrder, groupID)
+		existing := existingByID[c.existingTopicID]
 		groups = append(groups, llmTopicGroup{
-			GroupID:             groupID,
-			DirectoryHint:       c.subsystem.Name,
-			SessionCount:        c.subsystem.Sessions,
-			LastActive:          c.lastActive,
-			Prompts:             c.prompts,
-			Commands:            c.commands,
-			TopEditedFiles:      c.subsystem.TopFiles,
-			TopReadFiles:        c.topReadFiles,
-			TestFiles:           c.tests,
-			SeenWith:            c.seenWith,
-			SubsystemLabels:     c.subsystem.Classification,
-			FileLabels:          fileLabels,
-			TestTouchSignal:     c.testTouchSignal,
-			ReadBeforeEditHints: c.readBeforeEditHints,
+			GroupID:              groupID,
+			ExistingTopicID:      c.existingTopicID,
+			ExistingTopicName:    existing.Name,
+			ExistingTopicSummary: existing.Summary,
+			SourceIDs:            c.sourceIDs,
+			SupportLevel:         c.supportLevel,
+			RepeatedEditedFiles:  c.repeatedEditedFiles,
+			DirectoryHint:        c.subsystem.Name,
+			SessionCount:         c.subsystem.Sessions,
+			LastActive:           c.lastActive,
+			Prompts:              c.prompts,
+			Commands:             c.commands,
+			TopEditedFiles:       c.subsystem.TopFiles,
+			TopReadFiles:         c.topReadFiles,
+			TestFiles:            c.tests,
+			SeenWith:             c.seenWith,
+			SubsystemLabels:      c.subsystem.Classification,
+			FileLabels:           fileLabels,
+			TestTouchSignal:      c.testTouchSignal,
+			ReadBeforeEditHints:  c.readBeforeEditHints,
 		})
 	}
 
-	groupsJSON, _ := json.Marshal(groups)
-	prompt := prompts.BuildTopicPrompt(string(groupsJSON), repoCtx)
-
-	raw, usage, err := callClaude(ctx, topicModel, prompt)
-	if err != nil {
-		return nil, usage, err
+	const parallelTopicTurns = 5
+	type topicTurnResult struct {
+		index int
+		named []llmTopicResult
+		usage Usage
+		err   error
 	}
-
-	raw = stripFences(raw)
-
-	named, parseErr := parseTopicResults(raw)
-	topics := materializeTopicContexts(named, groupByID, groupOrder)
-	if parseErr != nil {
-		if len(named) == 0 {
-			return fallbackTopicContexts(candidates), usage, nil
+	ordered := make([]topicTurnResult, len(groups))
+	var usage Usage
+	for start := 0; start < len(groups); start += parallelTopicTurns {
+		end := min(start+parallelTopicTurns, len(groups))
+		results := make(chan topicTurnResult, end-start)
+		for index := start; index < end; index++ {
+			go func() {
+				started := time.Now()
+				group := groups[index]
+				slog.Info("topic context turn started", "turn", index+1, "turns", len(groups), "group_id", group.GroupID, "sources", len(group.SourceIDs))
+				groupsJSON, _ := json.Marshal([]llmTopicGroup{group})
+				raw, turnUsage, err := callClaude(ctx, topicModel, prompts.BuildTopicPrompt(string(groupsJSON), repoCtx))
+				if err != nil {
+					slog.Error("topic context turn failed", "turn", index+1, "turns", len(groups), "group_id", group.GroupID, "sources", len(group.SourceIDs), "duration_ms", time.Since(started).Milliseconds(), "err", err)
+					results <- topicTurnResult{index: index, usage: turnUsage, err: err}
+					return
+				}
+				named, parseErr := parseTopicResults(stripFences(raw))
+				if parseErr != nil && len(named) == 0 {
+					fallback := fallbackTopicResult(candidates[index])
+					fallback.GroupIDs = []string{group.GroupID}
+					named = []llmTopicResult{fallback}
+				}
+				slog.Info("topic context turn completed", "turn", index+1, "turns", len(groups), "group_id", group.GroupID, "sources", len(group.SourceIDs), "input_tokens", turnUsage.InputTokens, "output_tokens", turnUsage.OutputTokens, "duration_ms", time.Since(started).Milliseconds())
+				results <- topicTurnResult{index: index, named: named, usage: turnUsage}
+			}()
 		}
-		return topics, usage, nil
+		for index := start; index < end; index++ {
+			result := <-results
+			ordered[result.index] = result
+			usage = mergeUsage(usage, result.usage)
+		}
+	}
+	var topics []model.TopicContext
+	for index, result := range ordered {
+		if result.err != nil {
+			return nil, usage, result.err
+		}
+		groupID := groupOrder[index]
+		topics = append(topics, materializeTopicContexts(result.named, groupByID, []string{groupID})...)
 	}
 	return topics, usage, nil
 }
 
 type aggregatedTopicEvidence struct {
-	sessions    int
-	editedFiles int
-	readFiles   int
-	lastActive  string
+	sessions            int
+	editedFiles         int
+	readFiles           int
+	lastActive          string
+	supportLevel        string
+	sourceIDs           []string
+	repeatedEditedFiles []string
+	independentAuthors  int
 }
 
 func materializeTopicContexts(results []llmTopicResult, groupByID map[string]topicCandidate, groupOrder []string) []model.TopicContext {
 	topics := make([]model.TopicContext, 0, len(results))
 	for i, result := range results {
-		if result.Confidence < minTopicConfidence {
-			continue
-		}
-
 		groupIDs := normalizeTopicGroupIDs(result.GroupIDs, groupByID, groupOrder, i, len(results))
 		if len(groupIDs) == 0 {
 			continue
 		}
 
 		evidence := aggregateTopicEvidence(groupIDs, groupByID)
-		topics = append(topics, model.TopicContext{
-			ID:             toID(result.Name, i),
+		if evidence.supportLevel == "weak" {
+			if result.Confidence < 0.35 {
+				result.Confidence = 0.35
+			} else if result.Confidence > 0.49 {
+				result.Confidence = 0.49
+			}
+		} else if result.Confidence < minTopicConfidence {
+			continue
+		}
+		topicID := toID(result.Name, i)
+		if len(groupIDs) == 1 && groupByID[groupIDs[0]].existingTopicID != "" {
+			topicID = groupByID[groupIDs[0]].existingTopicID
+		}
+		topicEvidence := model.TopicEvidence{Sessions: evidence.sessions, EditedFiles: evidence.editedFiles, ReadFiles: evidence.readFiles, LastActive: evidence.lastActive, SupportLevel: evidence.supportLevel, SourceIDs: evidence.sourceIDs, RepeatedEditedFiles: evidence.repeatedEditedFiles, IndependentAuthors: evidence.independentAuthors}
+		topic := model.TopicContext{
+			ID:             topicID,
 			Name:           result.Name,
 			Summary:        result.Summary,
 			Confidence:     result.Confidence,
@@ -974,19 +1085,17 @@ func materializeTopicContexts(results []llmTopicResult, groupByID map[string]top
 			Tests: model.TopicTests{
 				StartWith: result.Tests.StartWith,
 				Signal:    result.Tests.Signal,
-				Notes:     result.Tests.Notes,
+				Notes:     textGuidanceItems(topicID, "tests.notes", result.Tests.Notes, result.Confidence, topicEvidence),
 				Commands:  result.Tests.Commands,
 			},
-			KnownWorkflows:   result.KnownWorkflows,
-			AvoidWastingTime: result.AvoidWastingTime,
-			RiskFlags:        result.RiskFlags,
-			Evidence: model.TopicEvidence{
-				Sessions:    evidence.sessions,
-				EditedFiles: evidence.editedFiles,
-				ReadFiles:   evidence.readFiles,
-				LastActive:  evidence.lastActive,
-			},
-		})
+			ScopeBoundaries:  guidanceItems(topicID, "scope_boundaries", result.ScopeBoundaries, result.Confidence, topicEvidence),
+			KnownWorkflows:   guidanceItems(topicID, "known_workflows", result.KnownWorkflows, result.Confidence, topicEvidence),
+			AvoidWastingTime: guidanceItems(topicID, "avoid_wasting_time", result.AvoidWastingTime, result.Confidence, topicEvidence),
+			RiskFlags:        textGuidanceItems(topicID, "risk_flags", result.RiskFlags, result.Confidence, topicEvidence),
+			Evidence:         topicEvidence,
+		}
+		model.EnsureTopicProvenance(&topic)
+		topics = append(topics, topic)
 	}
 	return topics
 }
@@ -1016,6 +1125,8 @@ func normalizeTopicGroupIDs(groupIDs []string, groupByID map[string]topicCandida
 
 func aggregateTopicEvidence(groupIDs []string, groupByID map[string]topicCandidate) aggregatedTopicEvidence {
 	var out aggregatedTopicEvidence
+	sourceSeen := map[string]struct{}{}
+	repeatedSeen := map[string]struct{}{}
 	for _, groupID := range groupIDs {
 		candidate, ok := groupByID[groupID]
 		if !ok {
@@ -1027,16 +1138,52 @@ func aggregateTopicEvidence(groupIDs []string, groupByID map[string]topicCandida
 		if candidate.lastActive > out.lastActive {
 			out.lastActive = candidate.lastActive
 		}
+		if supportRank(candidate.supportLevel) > supportRank(out.supportLevel) {
+			out.supportLevel = candidate.supportLevel
+		}
+		out.independentAuthors += candidate.independentAuthors
+		for _, id := range candidate.sourceIDs {
+			if _, ok := sourceSeen[id]; !ok {
+				sourceSeen[id] = struct{}{}
+				out.sourceIDs = append(out.sourceIDs, id)
+			}
+		}
+		for _, path := range candidate.repeatedEditedFiles {
+			if _, ok := repeatedSeen[path]; !ok {
+				repeatedSeen[path] = struct{}{}
+				out.repeatedEditedFiles = append(out.repeatedEditedFiles, path)
+			}
+		}
 	}
+	sort.Strings(out.sourceIDs)
+	sort.Strings(out.repeatedEditedFiles)
 	return out
+}
+
+func supportRank(level string) int {
+	switch level {
+	case "strong":
+		return 3
+	case "supported":
+		return 2
+	case "weak":
+		return 1
+	default:
+		return 0
+	}
 }
 
 func fallbackTopicContexts(candidates []topicCandidate) []model.TopicContext {
 	topics := make([]model.TopicContext, 0, len(candidates))
 	for i, candidate := range candidates {
 		result := fallbackTopicResult(candidate)
-		topics = append(topics, model.TopicContext{
-			ID:             toID(result.Name, i),
+		if candidate.supportLevel == "weak" {
+			result.Confidence = 0.4
+		}
+		topicID := toID(result.Name, i)
+		evidence := model.TopicEvidence{Sessions: candidate.subsystem.Sessions, EditedFiles: candidate.subsystem.SourceEdits + candidate.subsystem.TestEdits, ReadFiles: candidate.readFiles, LastActive: candidate.lastActive, SupportLevel: candidate.supportLevel, SourceIDs: candidate.sourceIDs, RepeatedEditedFiles: candidate.repeatedEditedFiles, IndependentAuthors: candidate.independentAuthors}
+		topic := model.TopicContext{
+			ID:             topicID,
 			Name:           result.Name,
 			Summary:        result.Summary,
 			Confidence:     result.Confidence,
@@ -1052,19 +1199,17 @@ func fallbackTopicContexts(candidates []topicCandidate) []model.TopicContext {
 			Tests: model.TopicTests{
 				StartWith: result.Tests.StartWith,
 				Signal:    result.Tests.Signal,
-				Notes:     result.Tests.Notes,
+				Notes:     textGuidanceItems(topicID, "tests.notes", result.Tests.Notes, result.Confidence, evidence),
 				Commands:  result.Tests.Commands,
 			},
-			KnownWorkflows:   result.KnownWorkflows,
-			AvoidWastingTime: result.AvoidWastingTime,
-			RiskFlags:        result.RiskFlags,
-			Evidence: model.TopicEvidence{
-				Sessions:    candidate.subsystem.Sessions,
-				EditedFiles: candidate.subsystem.SourceEdits + candidate.subsystem.TestEdits,
-				ReadFiles:   candidate.readFiles,
-				LastActive:  candidate.lastActive,
-			},
-		})
+			ScopeBoundaries:  guidanceItems(topicID, "scope_boundaries", result.ScopeBoundaries, result.Confidence, evidence),
+			KnownWorkflows:   guidanceItems(topicID, "known_workflows", result.KnownWorkflows, result.Confidence, evidence),
+			AvoidWastingTime: guidanceItems(topicID, "avoid_wasting_time", result.AvoidWastingTime, result.Confidence, evidence),
+			RiskFlags:        textGuidanceItems(topicID, "risk_flags", result.RiskFlags, result.Confidence, evidence),
+			Evidence:         evidence,
+		}
+		model.EnsureTopicProvenance(&topic)
+		topics = append(topics, topic)
 	}
 	return topics
 }
@@ -1245,8 +1390,8 @@ func fallbackTopicResult(c topicCandidate) llmTopicResult {
 			Notes:     notes,
 			Commands:  observedTestCommands(c.commands),
 		},
-		KnownWorkflows:   workflows,
-		AvoidWastingTime: avoid,
+		KnownWorkflows:   llmGuidanceItems(workflows),
+		AvoidWastingTime: llmGuidanceItems(avoid),
 		RiskFlags:        fallbackRiskFlags(c),
 	}
 }
@@ -1261,6 +1406,37 @@ func observedTestCommands(commands []commandEntry) []string {
 		}
 	}
 	return out
+}
+
+func llmGuidanceItems(values []string) []llmGuidanceItem {
+	items := make([]llmGuidanceItem, 0, len(values))
+	for _, value := range values {
+		items = append(items, llmGuidanceItem{Text: value})
+	}
+	return items
+}
+
+func guidanceItems(topicID, section string, values []llmGuidanceItem, confidence float64, evidence model.TopicEvidence) []model.TopicGuidanceItem {
+	items := make([]model.TopicGuidanceItem, 0, len(values))
+	for _, value := range values {
+		if strings.TrimSpace(value.Text) == "" {
+			continue
+		}
+		item := model.TopicGuidanceItem{
+			Text:       value.Text,
+			Steps:      dedupeStrings(value.Steps),
+			Files:      dedupeStrings(value.Files),
+			Severity:   value.Severity,
+			Confidence: confidence,
+		}
+		model.EnsureTopicGuidanceItem(topicID, section, &item, evidence)
+		items = append(items, item)
+	}
+	return items
+}
+
+func textGuidanceItems(topicID, section string, values []string, confidence float64, evidence model.TopicEvidence) []model.TopicGuidanceItem {
+	return guidanceItems(topicID, section, llmGuidanceItems(values), confidence, evidence)
 }
 
 func fallbackTopicName(c topicCandidate) string {

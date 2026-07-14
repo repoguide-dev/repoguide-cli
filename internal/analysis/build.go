@@ -22,13 +22,23 @@ func BuildRepoAnalysis(repoRoot string, stored []model.RepoSessionEvents, teamSy
 	}
 
 	sessions := make([]backendSession, 0, len(stored))
+	externalSources := make([]RepoAnalysisSource, 0)
 	for _, s := range stored {
+		if s.SourceType == "commit" || s.SourceType == "pull_request" {
+			externalSources = append(externalSources, RepoAnalysisSource{
+				ID: s.ID, SourceType: s.SourceType, AuthorID: s.SourceUserID,
+				Title: s.Name, Prompts: []string{s.Name}, ChangedFiles: normalizeRepoPaths(repoRoot, s.ChangedFiles),
+				Timestamp: s.UpdatedAt.UTC().Format(time.RFC3339),
+			})
+			continue
+		}
 		m := analyzeSessionEvents(s.Events)
 		// estimate cost using the agent as a proxy for model name
 		m.EstimatedCostUSD = estimateCost(s.Agent, m.TokenUsage)
 		sessions = append(sessions, backendSession{
 			id:        s.ID,
 			agent:     s.Agent,
+			authorID:  s.SourceUserID,
 			name:      s.Name,
 			timestamp: sessionTimestamp(s.Events, s.UpdatedAt),
 			metrics:   m,
@@ -36,7 +46,24 @@ func BuildRepoAnalysis(repoRoot string, stored []model.RepoSessionEvents, teamSy
 		})
 	}
 
-	return buildBundle(repoRoot, sessions, teamSynced), nil
+	bundle := buildBundle(repoRoot, sessions, teamSynced)
+	bundle.Sources = append(sessionAnalysisSources(bundle.Sessions), externalSources...)
+	if len(externalSources) == 0 {
+		bundle.Sources = append(bundle.Sources, recentGitCommitSources(repoRoot, 100)...)
+	}
+	return bundle, nil
+}
+
+func sessionAnalysisSources(sessions []RepoAnalysisSession) []RepoAnalysisSource {
+	out := make([]RepoAnalysisSource, 0, len(sessions))
+	for _, session := range sessions {
+		out = append(out, RepoAnalysisSource{
+			ID: session.ID, SourceType: "session", AuthorID: session.AuthorID, Title: session.Title,
+			Prompts: session.Prompts, ReadFiles: session.ReadFiles, ChangedFiles: session.EditedFiles,
+			Timestamp: session.Timestamp,
+		})
+	}
+	return out
 }
 
 func emptyBundle(repoRoot string, teamSynced bool) RepoAnalysisBundle {
@@ -76,7 +103,7 @@ func buildBundle(repoRoot string, sessions []backendSession, teamSynced bool) Re
 			GeneratedAt: generatedAt.Format(time.RFC3339),
 			TeamSynced:  teamSynced,
 		},
-		Sessions: buildSessionSummaries(sessions),
+		Sessions: buildSessionSummaries(repoRoot, sessions),
 	}
 
 	fileStats := map[string]*fileAccum{}
@@ -1296,7 +1323,7 @@ func sanitizeInteractionText(text string) string {
 	return text
 }
 
-func buildSessionSummaries(sessions []backendSession) []RepoAnalysisSession {
+func buildSessionSummaries(repoRoot string, sessions []backendSession) []RepoAnalysisSession {
 	type sessionSummaryRow struct {
 		session   RepoAnalysisSession
 		timestamp time.Time
@@ -1328,9 +1355,11 @@ func buildSessionSummaries(sessions []backendSession) []RepoAnalysisSession {
 		}
 		row := sessionSummaryRow{
 			session: RepoAnalysisSession{
-				ID:        session.id,
-				Title:     sessionDisplayName(session.name),
-				Timestamp: session.timestamp.UTC().Format(time.RFC3339),
+				ID:         session.id,
+				Title:      sessionDisplayName(session.name),
+				SourceType: "session",
+				AuthorID:   session.authorID,
+				Timestamp:  session.timestamp.UTC().Format(time.RFC3339),
 			},
 			timestamp: session.timestamp,
 		}
@@ -1340,6 +1369,17 @@ func buildSessionSummaries(sessions []backendSession) []RepoAnalysisSession {
 		if len(interactions) > 0 {
 			row.session.Interactions = interactions
 		}
+		activity := buildFileActivity(repoRoot, session.metrics)
+		for path, file := range activity {
+			if file.reads > 0 {
+				row.session.ReadFiles = append(row.session.ReadFiles, path)
+			}
+			if file.edits > 0 {
+				row.session.EditedFiles = append(row.session.EditedFiles, path)
+			}
+		}
+		sort.Strings(row.session.ReadFiles)
+		sort.Strings(row.session.EditedFiles)
 		for _, cmd := range session.metrics.Commands {
 			row.session.Commands = append(row.session.Commands, RepoAnalysisCommand{
 				Text:     cmd.Text,

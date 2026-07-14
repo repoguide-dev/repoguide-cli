@@ -7,6 +7,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strconv"
 	"strings"
 )
 
@@ -193,7 +194,7 @@ func installManagedCommitHooks(repoRoot string) error {
 			return err
 		}
 		data, _ := os.ReadFile(path)
-		updated := upsertManagedHookBlock(string(data), name)
+		updated := upsertManagedHookBlock(string(data), name, managedHookBinaryPath())
 		if err := os.WriteFile(path, []byte(updated), 0o755); err != nil {
 			return err
 		}
@@ -474,8 +475,8 @@ func readHooksPathAt(repoRoot string) string {
 	return value
 }
 
-func upsertManagedHookBlock(existing, hookName string) string {
-	block := managedHookBlock(hookName)
+func upsertManagedHookBlock(existing, hookName, binPath string) string {
+	block := managedHookBlock(hookName, binPath)
 	if cleaned, removed := removeManagedHookBlock(existing); removed {
 		existing = cleaned
 	}
@@ -511,11 +512,25 @@ func removeManagedHookBlock(existing string) (string, bool) {
 	}
 }
 
-func managedHookBlock(hookName string) string {
+// managedHookBinaryPath returns the exact executable that installed the hook.
+// Local builds use a distinct repoguide-local binary and must not fall back to
+// the released `repoguide` found on PATH.
+func managedHookBinaryPath() string {
+	if self, err := os.Executable(); err == nil {
+		return self
+	}
+	if path, err := exec.LookPath("repoguide"); err == nil {
+		return path
+	}
+	return "repoguide"
+}
+
+func managedHookBlock(hookName, binPath string) string {
+	quotedBin := strconv.Quote(binPath)
 	return strings.Join([]string{
 		managedHookStart,
-		`if command -v repoguide >/dev/null 2>&1; then`,
-		fmt.Sprintf("  repoguide repo hook-run %s || exit $?", hookName),
+		fmt.Sprintf("if [ -x %s ]; then", quotedBin),
+		fmt.Sprintf("  %s repo hook-run %s || exit $?", quotedBin, hookName),
 		"fi",
 		managedHookEnd,
 	}, "\n")

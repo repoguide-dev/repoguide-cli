@@ -5,16 +5,17 @@ import (
 	"testing"
 )
 
-func TestUnderstandTaskHintSystemGuardsAgainstSessionScopeDrift(t *testing.T) {
+func TestSelectAdviceSystemOnlyRanksEvidenceIDs(t *testing.T) {
 	checks := []string{
-		`Ignore it when it contains quoted tool output, speculative diagnoses, or scope claims not grounded in repository/topic context.`,
-		`Recent session context is weak evidence and must never override the current user request, repository context, or topic context.`,
-		`Do not reframe a repository code task as operations, deployment, cluster administration, incident response, or non-code work unless that scope is explicit in the current user request or grounded in repository/topic context.`,
-		`Do not repeat or endorse a quoted prior hint, routing decision, or topic guess unless repository/topic context independently supports it.`,
+		`evidence selector, not an advice author`,
+		`Return IDs exactly as supplied`,
+		`Positive and negative examples are relevance examples only`,
+		`Never invent files, APIs, facts, algorithms, implementation steps, or new advice`,
+		`fields other than the six allowed category arrays`,
 	}
 	for _, want := range checks {
-		if !strings.Contains(UnderstandTaskHintSystem, want) {
-			t.Fatalf("UnderstandTaskHintSystem missing %q", want)
+		if !strings.Contains(SelectAdviceSystem, want) {
+			t.Fatalf("SelectAdviceSystem missing %q", want)
 		}
 	}
 }

@@ -10,11 +10,11 @@ import (
 
 // LLM is the AI interface used by the services layer. Implemented by *Client.
 type LLM interface {
-	DeriveTopicsAndGenerateContext(ctx context.Context, bundle contracts.RepoAnalysisBundle, docs map[string]string) ([]model.TopicContext, Usage, error)
+	DeriveTopicsAndGenerateContext(ctx context.Context, bundle contracts.RepoAnalysisBundle, docs map[string]string, existingTopics []model.TopicContext) ([]model.TopicContext, Usage, error)
 	GenerateRepoContext(ctx context.Context, bundle contracts.RepoAnalysisBundle, docs map[string]string) (string, Usage, error)
 	GenerateTopicContextFromFeedback(ctx context.Context, suggestedName, feedback string, bundle contracts.RepoAnalysisBundle, events []model.SessionEvent, existingTopics []model.TopicContext) (*model.TopicContext, string, Usage, error)
-	SelectTopic(ctx context.Context, repoContext string, topics []TopicSummary, task string, prompts []string) (SelectTopicResult, Usage, error)
-	WriteOrientationHint(ctx context.Context, repoContext string, topic model.TopicContext, task string, prompts []string, priorSessions []PriorSession) (string, bool, Usage, error)
+	SelectTopic(ctx context.Context, repoContext string, topics []TopicSummary, task string, prompts []string, positive, negative []TopicRoutingExample) (SelectTopicResult, Usage, error)
+	SelectAdvice(ctx context.Context, task string, topic model.TopicContext, candidates []AdviceItem, budget SelectionBudget, positive, negative []TopicRoutingExample, feedback []model.MCPFeedback) (AdviceSelectionResponse, Usage, error)
 	ClassifyFeedback(ctx context.Context, fb *model.MCPFeedback) (*model.FeedbackClassification, Usage, error)
 	CurateTopicContext(ctx context.Context, topic *model.TopicContext, feedbacks []*model.MCPFeedback, pending []model.TopicPatchSuggestion, sessions []TopicCurationSession) (*TopicCuration, Usage, error)
 	PatchRepoContext(ctx context.Context, current string, feedbacks []*model.MCPFeedback, sessions []RepoContextSession, teamSynced bool) (*RepoContextPatch, Usage, error)
@@ -62,11 +62,11 @@ func (c *Client) withKey(f func()) {
 	f()
 }
 
-func (c *Client) DeriveTopicsAndGenerateContext(ctx context.Context, bundle contracts.RepoAnalysisBundle, docs map[string]string) ([]model.TopicContext, Usage, error) {
+func (c *Client) DeriveTopicsAndGenerateContext(ctx context.Context, bundle contracts.RepoAnalysisBundle, docs map[string]string, existingTopics []model.TopicContext) ([]model.TopicContext, Usage, error) {
 	var topics []model.TopicContext
 	var usage Usage
 	var err error
-	c.withKey(func() { topics, usage, err = DeriveTopicsAndGenerateContext(ctx, bundle, docs) })
+	c.withKey(func() { topics, usage, err = DeriveTopicsAndGenerateContext(ctx, bundle, docs, existingTopics) })
 	return topics, usage, err
 }
 
@@ -89,23 +89,22 @@ func (c *Client) GenerateTopicContextFromFeedback(ctx context.Context, suggested
 	return topic, reason, usage, err
 }
 
-func (c *Client) SelectTopic(ctx context.Context, repoContext string, topics []TopicSummary, task string, prompts []string) (SelectTopicResult, Usage, error) {
+func (c *Client) SelectTopic(ctx context.Context, repoContext string, topics []TopicSummary, task string, prompts []string, positive, negative []TopicRoutingExample) (SelectTopicResult, Usage, error) {
 	var result SelectTopicResult
 	var usage Usage
 	var err error
-	c.withKey(func() { result, usage, err = SelectTopic(ctx, repoContext, topics, task, prompts) })
+	c.withKey(func() { result, usage, err = SelectTopic(ctx, repoContext, topics, task, prompts, positive, negative) })
 	return result, usage, err
 }
 
-func (c *Client) WriteOrientationHint(ctx context.Context, repoContext string, topic model.TopicContext, task string, prompts []string, priorSessions []PriorSession) (string, bool, Usage, error) {
-	var hint string
-	var found bool
+func (c *Client) SelectAdvice(ctx context.Context, task string, topic model.TopicContext, candidates []AdviceItem, budget SelectionBudget, positive, negative []TopicRoutingExample, feedback []model.MCPFeedback) (AdviceSelectionResponse, Usage, error) {
+	var selected AdviceSelectionResponse
 	var usage Usage
 	var err error
 	c.withKey(func() {
-		hint, found, usage, err = WriteOrientationHint(ctx, repoContext, topic, task, prompts, priorSessions)
+		selected, usage, err = SelectAdvice(ctx, task, topic, candidates, budget, positive, negative, feedback)
 	})
-	return hint, found, usage, err
+	return selected, usage, err
 }
 
 func (c *Client) ClassifyFeedback(ctx context.Context, fb *model.MCPFeedback) (*model.FeedbackClassification, Usage, error) {

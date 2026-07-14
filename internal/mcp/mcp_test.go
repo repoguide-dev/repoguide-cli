@@ -10,8 +10,8 @@ func TestAgentInstructionUsesUnderstandTask(t *testing.T) {
 	for _, want := range []string{
 		"repoguide_get_repo_experience",
 		"test-repo-id",
-		"tests",
-		"search queries",
+		"compact selection of evidence-backed repository experience",
+		"repoguide_get_full_topic_context",
 	} {
 		if !strings.Contains(instr, want) {
 			t.Fatalf("expected AgentInstruction to contain %q", want)
@@ -53,9 +53,9 @@ func TestUnderstandTaskResponseExplainsStandaloneWorkflow(t *testing.T) {
 func TestAgentFeedbackInstructionRequestsTopicFilesAndCandidateRule(t *testing.T) {
 	instr := AgentFeedbackInstructionFor("test-repo-id")
 	for _, want := range []string{
-		"selected topic",
-		"useful, incorrect, unnecessary, or missing",
-		"specific repository files",
+		"stable advice IDs",
+		"incorrect, unnecessary, or missing",
+		"useful or misleading files",
 		"exactly one reusable repository rule",
 		"file anchors",
 		"stored as a candidate",

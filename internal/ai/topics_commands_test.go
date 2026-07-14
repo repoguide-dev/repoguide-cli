@@ -101,9 +101,11 @@ func TestTopicPromptDemandsEvidenceBasedOutput(t *testing.T) {
 		// commands must come from observation, never invention
 		"only commands copied verbatim from the commands input",
 		"Never invent commands.",
-		// failures and corrections are first-class evidence
-		"commands with failures (name the command and that it failed here)",
-		"treat corrections as strong evidence",
+		// topic generation may author rich guidance, but only from evidence
+		"failures may support specific warnings",
+		"Later corrections can narrow the intended domain",
+		"You may author evidence-grounded textual advice, structured workflows, scope boundaries, and warnings",
+		"Every file, step, command, and claim must be traceable",
 		// recency and stale-path handling
 		"last_active",
 		"omit the file rather than emitting a dead path",
@@ -112,8 +114,9 @@ func TestTopicPromptDemandsEvidenceBasedOutput(t *testing.T) {
 		"Use the whole group/bundle context when selecting files for a topic",
 		// topic granularity should stay focused
 		"Prefer area-focused topics over layer buckets",
-		"split them by developer intent and touched files instead of collapsing them into one broad layer topic",
-		"Reuse a group_id across multiple topics only when the same directory truly contains multiple distinct recurring areas",
+		"Candidate groups already separate recurring features within a directory",
+		"Do not merge groups or split a group",
+		"group_ids: exactly one input group_id",
 	}
 	for _, want := range wants {
 		if !strings.Contains(prompt, want) {
@@ -175,7 +178,9 @@ func TestTopicCuratorPromptDemandsSessionEvidence(t *testing.T) {
 		"failed_commands",
 		"never invent paths",
 		"corrects the agent",
-		"Commands come only from session data",
+		"Commands and failures may support advice only when they appear in the session evidence",
+		"known_workflows = structured workflows with text, optional ordered steps, and observed file anchors",
+		"avoid_wasting_time = specific warnings with optional severity and observed file anchors",
 		"Use diff snippets as supporting evidence",
 	}
 	for _, want := range wants {

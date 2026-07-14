@@ -206,6 +206,26 @@ func TestFeedback(t *testing.T) {
 	}
 }
 
+func TestActionableFeedbackReturnsNewestFirst(t *testing.T) {
+	st := openTest(t)
+	ctx := context.Background()
+	for _, feedback := range []*model.MCPFeedback{
+		{FeedbackID: "older", RepoID: "r1", Task: "old", CreatedAt: time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)},
+		{FeedbackID: "newer", RepoID: "r1", Task: "new", CreatedAt: time.Date(2026, 2, 1, 0, 0, 0, 0, time.UTC)},
+	} {
+		if _, err := st.Feedback().PutFeedback(ctx, feedback); err != nil {
+			t.Fatal(err)
+		}
+	}
+	got, err := st.Feedback().ListActionableFeedback(ctx, "r1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(got) != 2 || got[0].FeedbackID != "newer" || got[1].FeedbackID != "older" {
+		t.Fatalf("feedback order = %#v", got)
+	}
+}
+
 func TestFeedbackProcessingClaimLifecycle(t *testing.T) {
 	st := openTest(t)
 	ctx := context.Background()

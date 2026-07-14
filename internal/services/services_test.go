@@ -417,7 +417,9 @@ func TestRenderTestContextIncludesSignalAndFiles(t *testing.T) {
 		Tests: model.TopicTests{
 			Signal:    "tests as spec",
 			StartWith: []string{"auth_test.go"},
-			Notes:     []string{"run with -race"},
+			Notes: []model.TopicGuidanceItem{
+				{ID: "test-race", Text: "run with -race"},
+			},
 		},
 		ImportantFiles: model.TopicImportantFiles{
 			TestFiles: []string{"pkg/auth_test.go"},

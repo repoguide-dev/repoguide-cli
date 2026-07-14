@@ -3,6 +3,7 @@ package mcp
 import (
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -140,6 +141,44 @@ func TestInstallCodexPluginWritesHooksByDefault(t *testing.T) {
 	path := filepath.Join(homeDir, ".repoguide", "codex-marketplace", "plugins", "repoguide", "hooks", "hooks.json")
 	if _, err := os.Stat(path); err != nil {
 		t.Fatalf("expected hooks.json to be written: %v", err)
+	}
+}
+
+func TestInstallCodexPluginRefreshesExistingPlugin(t *testing.T) {
+	tempDir := t.TempDir()
+	homeDir := filepath.Join(tempDir, "home")
+	binDir := filepath.Join(tempDir, "bin")
+	logPath := filepath.Join(tempDir, "codex.log")
+	if err := os.MkdirAll(homeDir, 0o755); err != nil {
+		t.Fatalf("MkdirAll(home): %v", err)
+	}
+	if err := os.MkdirAll(binDir, 0o755); err != nil {
+		t.Fatalf("MkdirAll(bin): %v", err)
+	}
+	t.Setenv("HOME", homeDir)
+	t.Setenv("PATH", binDir+string(os.PathListSeparator)+os.Getenv("PATH"))
+	t.Setenv("CODEX_LOG", logPath)
+	codexStub := filepath.Join(binDir, "codex")
+	if err := os.WriteFile(codexStub, []byte("#!/bin/sh\nprintf '%s\\n' \"$*\" >> \"$CODEX_LOG\"\n"), 0o755); err != nil {
+		t.Fatalf("WriteFile(codex stub): %v", err)
+	}
+
+	if err := installCodexPlugin("/tmp/repoguide", true); err != nil {
+		t.Fatalf("installCodexPlugin: %v", err)
+	}
+
+	data, err := os.ReadFile(logPath)
+	if err != nil {
+		t.Fatalf("ReadFile(codex log): %v", err)
+	}
+	log := string(data)
+	remove := "plugin remove " + mcpPluginName + "@" + repoguideMarketplace
+	add := "plugin add " + mcpPluginName + "@" + repoguideMarketplace
+	if !strings.Contains(log, remove) || !strings.Contains(log, add) {
+		t.Fatalf("expected plugin refresh commands %q and %q, got %q", remove, add, log)
+	}
+	if strings.Index(log, remove) > strings.Index(log, add) {
+		t.Fatalf("expected plugin removal before re-add, got %q", log)
 	}
 }
 

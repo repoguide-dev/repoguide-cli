@@ -9,6 +9,8 @@ import (
 
 	"github.com/repoguide/repoguide-cli/internal/ai"
 	storecontract "github.com/repoguide/repoguide-cli/internal/store"
+	"github.com/repoguide/repoguide-core/contracts/v1"
+	"github.com/repoguide/repoguide-core/experience"
 	"github.com/repoguide/repoguide-core/model"
 )
 
@@ -25,9 +27,14 @@ type UnderstandTaskOutput struct {
 	// "ok" | "needs_clarification"
 	Status            string
 	TopicID           string
-	ContextText       string // formatted topic context ready to show the agent
-	Explanation       string // preamble before context
+	MatchConfidence   float64
+	ContextText       string
+	Explanation       string
+	SelectedAdvice    []contracts.AdviceItem
+	CandidateTopics   []contracts.TopicMatch
 	CandidateTopicIDs []string
+	Reason            string
+	Question          string
 }
 
 // ── Tool implementations ──────────────────────────────────────────────────────
@@ -65,79 +72,99 @@ func (s *MCPService) UnderstandTask(ctx context.Context, repoID, task, topicID s
 		return nil, fmt.Errorf("load topics: %w", err)
 	}
 
+	feedback, _ := s.store.Feedback().ListActionableFeedback(ctx, repoID)
+	positiveRoutes, negativeRoutes := experience.BuildRoutingExamples(feedback)
+
 	summaries := make([]ai.TopicSummary, 0, len(topics))
 	for _, t := range topics {
-		summaries = append(summaries, ai.TopicSummary{ID: t.ID, Name: t.Name, Summary: t.Summary})
+		summaries = append(summaries, ai.TopicSummary{ID: t.ID, Name: t.Name, Summary: t.Summary, WhenToUse: t.WhenToUse, PromptKeywords: t.PromptKeywords})
 	}
 
-	// Second call: topicID already chosen - write the orientation hint.
 	if topicID != "" {
-		var chosen *model.TopicContext
-		for i := range topics {
-			if topics[i].ID == topicID {
-				chosen = &topics[i]
-				break
-			}
-		}
+		chosen := findTopic(topics, topicID)
 		if chosen == nil {
 			return nil, fmt.Errorf("topic %q not found", topicID)
 		}
-		hint, found, _, err := s.ai.WriteOrientationHint(ctx, repoCtx, *chosen, task, sessionPrompts, nil)
-		if err != nil {
-			return nil, fmt.Errorf("AI hint: %w", err)
-		}
-		if !found {
-			hint = compactTopicHint(*chosen)
-		}
-		return &UnderstandTaskOutput{
-			Status:      "ok",
-			TopicID:     topicID,
-			ContextText: renderTopicContextText(*chosen),
-			Explanation: hint,
-		}, nil
+		return s.buildTaskOutput(ctx, repoID, task, *chosen, 0, 1, feedback, "Task-to-topic match: "+chosen.Name+" (selected by caller)"), nil
 	}
 
 	// First call: select topic.
-	result, _, err := s.ai.SelectTopic(ctx, repoCtx, summaries, task, sessionPrompts)
+	result, _, err := s.ai.SelectTopic(ctx, repoCtx, summaries, task, sessionPrompts, positiveRoutes, negativeRoutes)
 	if err != nil {
 		return nil, fmt.Errorf("AI topic select: %w", err)
 	}
 	if result.Status == "needs_clarification" || result.TopicID == "" {
+		matches := nameTopicMatches(result.CandidateTopics, topics)
 		return &UnderstandTaskOutput{
 			Status:            "needs_clarification",
+			CandidateTopics:   matches,
 			CandidateTopicIDs: result.CandidateTopicIDs,
+			Reason:            result.Reason,
+			Question:          result.Question,
 		}, nil
 	}
-	var chosen *model.TopicContext
-	for i := range topics {
-		if topics[i].ID == result.TopicID {
-			chosen = &topics[i]
-			break
-		}
-	}
+	chosen := findTopic(topics, result.TopicID)
 	if chosen == nil {
 		return &UnderstandTaskOutput{Status: "needs_clarification"}, nil
 	}
-	hint, found, _, _ := s.ai.WriteOrientationHint(ctx, repoCtx, *chosen, task, sessionPrompts, nil)
-	if !found {
-		hint = compactTopicHint(*chosen)
-	}
-	return &UnderstandTaskOutput{
-		Status:      "ok",
-		TopicID:     result.TopicID,
-		ContextText: renderTopicContextText(*chosen),
-		Explanation: hint,
-	}, nil
+	matchCount := plausibleMatchCount(result.CandidateTopics)
+	explanation := fmt.Sprintf("Task-to-topic match: %.0f%% %s", result.Confidence*100, chosen.Name)
+	return s.buildTaskOutput(ctx, repoID, task, *chosen, result.Confidence, matchCount, feedback, explanation), nil
 }
 
 // ── Render helpers ────────────────────────────────────────────────────────────
 
-func renderTopicContextText(t model.TopicContext) string {
-	return ai.RenderTopicContextText(t)
+func (s *MCPService) buildTaskOutput(ctx context.Context, repoID, task string, topic model.TopicContext, confidence float64, matchCount int, feedback []model.MCPFeedback, explanation string) *UnderstandTaskOutput {
+	repoRoot := ""
+	if repo, _ := s.store.Repos().Get(ctx, repoID); repo != nil {
+		repoRoot = repo.RepoRoot
+	}
+	sessions, _ := s.store.Events().Get(ctx, repoID)
+	pkg := experience.BuildTaskPackage(task, repoRoot, topic, sessions)
+	pkg = experience.SetSelectionBudget(pkg, matchCount)
+	topicFeedback := experience.FeedbackForTopic(topic.ID, feedback)
+	pkg = experience.ApplyAdviceFeedback(pkg, topicFeedback)
+	positive, negative := experience.BuildTopicRoutingExamples(topic.ID, feedback)
+	if len(pkg.CandidateAdvice) > 0 {
+		if selected, _, err := s.ai.SelectAdvice(ctx, task, topic, pkg.CandidateAdvice, pkg.Budget, positive, negative, topicFeedback); err == nil {
+			pkg = experience.SelectAdvice(pkg, selected)
+		}
+	}
+	return &UnderstandTaskOutput{
+		Status: "ok", TopicID: topic.ID, MatchConfidence: confidence,
+		ContextText: experience.RenderTaskPackage(topic, pkg), Explanation: explanation,
+		SelectedAdvice: pkg.SelectedAdvice,
+	}
 }
 
-func compactTopicHint(t model.TopicContext) string {
-	return ai.CompactTopicHint(t)
+func findTopic(topics []model.TopicContext, topicID string) *model.TopicContext {
+	for i := range topics {
+		if topics[i].ID == topicID {
+			return &topics[i]
+		}
+	}
+	return nil
+}
+
+func nameTopicMatches(matches []contracts.TopicMatch, topics []model.TopicContext) []contracts.TopicMatch {
+	byID := make(map[string]string, len(topics))
+	for _, topic := range topics {
+		byID[topic.ID] = topic.Name
+	}
+	for i := range matches {
+		matches[i].Name = byID[matches[i].TopicID]
+	}
+	return matches
+}
+
+func plausibleMatchCount(matches []contracts.TopicMatch) int {
+	count := 0
+	for _, match := range matches {
+		if match.Confidence >= 0.60 {
+			count++
+		}
+	}
+	return max(1, count)
 }
 
 // RenderTestContext produces test guidance text for the MCP test_context tool.
@@ -156,7 +183,13 @@ func RenderTestContext(t *model.TopicContext, files []string) string {
 	if len(t.Tests.Notes) > 0 {
 		sb.WriteString("\nNotes:\n")
 		for _, n := range t.Tests.Notes {
-			fmt.Fprintf(&sb, "- %s\n", n)
+			fmt.Fprintf(&sb, "- %s\n", n.Text)
+		}
+	}
+	if len(t.Tests.Commands) > 0 {
+		sb.WriteString("\nObserved validation commands:\n")
+		for _, command := range t.Tests.Commands {
+			fmt.Fprintf(&sb, "- %s\n", command)
 		}
 	}
 	if len(files) > 0 && len(t.ImportantFiles.TestFiles) > 0 {

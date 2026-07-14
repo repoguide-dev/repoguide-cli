@@ -37,6 +37,7 @@ func TestHandleMCPRequestListsTools(t *testing.T) {
 	}
 	wantNames := []string{
 		"repoguide_list_topics",
+		"repoguide_get_full_topic_context",
 		"repoguide_get_test_context",
 		"repoguide_get_search_context",
 		"repoguide_get_repo_experience",
@@ -53,16 +54,16 @@ func TestHandleMCPRequestListsTools(t *testing.T) {
 	if !strings.Contains(tools[0].Description, "repoguide_get_repo_experience") {
 		t.Fatalf("expected repoguide_list_topics description to point back to repoguide_get_repo_experience, got %q", tools[0].Description)
 	}
-	if !strings.Contains(tools[3].Description, "Primary RepoGuide entry point") {
-		t.Fatalf("expected repoguide_get_repo_experience description to advertise MCP-first bootstrap flow, got %q", tools[3].Description)
+	if !strings.Contains(tools[4].Description, "Primary entry point") {
+		t.Fatalf("expected repoguide_get_repo_experience description to advertise the compact bootstrap flow, got %q", tools[4].Description)
 	}
-	if !strings.Contains(tools[3].Description, "not once per message or turn") {
-		t.Fatalf("expected repoguide_get_repo_experience description to forbid per-message repetition, got %q", tools[3].Description)
+	if !strings.Contains(tools[4].Description, "Full topic/test/search context is opt-in") {
+		t.Fatalf("expected repoguide_get_repo_experience description to keep full context opt-in, got %q", tools[4].Description)
 	}
 	if required, ok := tools[0].InputSchema["required"]; ok && len(required.([]string)) > 0 {
 		t.Fatalf("expected repoguide_list_topics to allow empty arguments, got required=%v", required)
 	}
-	feedbackSchema := tools[4].InputSchema
+	feedbackSchema := tools[5].InputSchema
 	required, _ := feedbackSchema["required"].([]string)
 	for _, want := range []string{"advice_evaluation", "candidate_rule"} {
 		if !slices.Contains(required, want) {
@@ -158,7 +159,7 @@ func TestCallMCPToolUnderstandTaskFallsBackWithoutBackend(t *testing.T) {
 	}
 }
 
-func TestCallMCPToolUnderstandTaskAutoSelectsSingleValidCandidate(t *testing.T) {
+func TestCallMCPToolUnderstandTaskPreservesClarification(t *testing.T) {
 	var understandCalls int
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch {
@@ -169,42 +170,16 @@ func TestCallMCPToolUnderstandTaskAutoSelectsSingleValidCandidate(t *testing.T) 
 				t.Fatalf("decode understand-task request: %v", err)
 			}
 			w.Header().Set("Content-Type", "application/json")
-			if understandCalls == 1 {
-				if req.TopicID != "" {
-					t.Fatalf("first understand-task topic_id = %q, want empty", req.TopicID)
-				}
-				_ = json.NewEncoder(w).Encode(contracts.MCPUnderstandTaskResult{
-					Status:            "needs_clarification",
-					CandidateTopicIDs: []string{"missing", "t2", "missing"},
-				})
-				return
-			}
-			if req.TopicID != "t2" {
-				t.Fatalf("second understand-task topic_id = %q, want t2", req.TopicID)
+			if req.TopicID != "" {
+				t.Fatalf("understand-task topic_id = %q, want empty", req.TopicID)
 			}
 			_ = json.NewEncoder(w).Encode(contracts.MCPUnderstandTaskResult{
-				Explanation: "Resolved topic.",
-				TopicID:     "t2",
-				ContextText: "Topic: Two\nSummary: second",
-			})
-		case r.Method == http.MethodGet && r.URL.Path == "/api/repos/test-repo/mcp/topics":
-			w.Header().Set("Content-Type", "application/json")
-			_ = json.NewEncoder(w).Encode(map[string]any{
-				"topics": []contracts.MCPTopicSummary{
-					{ID: "t1", Name: "One", Summary: "first"},
-					{ID: "t2", Name: "Two", Summary: "second"},
+				Status: "needs_clarification",
+				CandidateTopics: []contracts.TopicMatch{
+					{TopicID: "t1", Name: "One", Confidence: 0.72},
+					{TopicID: "t2", Name: "Two", Confidence: 0.68},
 				},
 			})
-		case r.Method == http.MethodGet && r.URL.Path == "/api/repos/test-repo/mcp/topics/t2":
-			w.Header().Set("Content-Type", "application/json")
-			_ = json.NewEncoder(w).Encode(contracts.MCPTopicContext{
-				ID:      "t2",
-				Name:    "Two",
-				Summary: "second",
-			})
-		case r.Method == http.MethodGet && r.URL.Path == "/api/repos/test-repo/mcp/search":
-			w.Header().Set("Content-Type", "application/json")
-			_ = json.NewEncoder(w).Encode(contracts.MCPSearchContext{})
 		default:
 			t.Fatalf("unexpected request: %s %s", r.Method, r.URL.String())
 		}
@@ -222,14 +197,14 @@ func TestCallMCPToolUnderstandTaskAutoSelectsSingleValidCandidate(t *testing.T) 
 	if !ok || text == "" {
 		t.Fatalf("expected non-empty text, got %T: %v", result["text"], result["text"])
 	}
-	if strings.Contains(text, "Task maps to multiple topics") {
-		t.Fatalf("expected auto-selected experience, got clarification text: %s", text)
+	if !strings.Contains(text, "72% One") || !strings.Contains(text, "68% Two") {
+		t.Fatalf("expected calibrated candidate percentages, got: %s", text)
 	}
-	if !strings.Contains(text, "Resolved topic.") {
-		t.Fatalf("expected resolved explanation in response, got: %s", text)
+	if !strings.Contains(text, "Which topic should RepoGuide use?") {
+		t.Fatalf("expected clarification question, got: %s", text)
 	}
-	if understandCalls != 2 {
-		t.Fatalf("understand-task call count = %d, want 2", understandCalls)
+	if understandCalls != 1 {
+		t.Fatalf("understand-task call count = %d, want 1", understandCalls)
 	}
 }
 

@@ -20,7 +20,7 @@ func TestNewAnthropicRequestContextIgnoresParentCancellation(t *testing.T) {
 	}
 }
 
-func TestNewAnthropicRequestContextTimesOutWithinFiveMinutes(t *testing.T) {
+func TestNewAnthropicRequestContextUsesConfiguredTimeout(t *testing.T) {
 	ctx, cancel := newAnthropicRequestContext(context.Background())
 	defer cancel()
 
