@@ -29,8 +29,9 @@ Rules:
 - Do not invent files not present in the session data or file_labels.
 - Use the broader session/group evidence when choosing files: include adjacent reference files, tests, shared state, and co-touched files that support the same domain topic, not just the most obvious edited file.
 - Prefer developer intent from the user prompts over file paths.
-- Session prompts are in order: later prompts often correct or narrow earlier ones. A correction is strong evidence for known_workflows or avoid_wasting_time.
-- Session commands are shell commands the agent actually ran; failed_commands are the ones that errored. Use commands (never invented ones) for tests.commands and known_workflows; use failed_commands as avoid_wasting_time evidence when the failure looks repeatable rather than task-specific.
+- Session prompts are in order: later prompts often correct or narrow earlier ones. Corrections may support routing, textual advice, structured workflows, or warnings.
+- Session commands are shell commands the agent actually ran. Use only exact observed commands and treat failures as warning evidence.
+- Workflows may contain text, ordered steps, and observed file anchors. Warnings may contain text, severity, and observed file anchors. Never invent repository facts.
 - Keep output compact - it will be injected directly into an agent's context window.
 
 Return only valid JSON. No markdown, no comments.

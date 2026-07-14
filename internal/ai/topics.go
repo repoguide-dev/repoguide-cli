@@ -132,8 +132,10 @@ func GenerateTopicContextFromFeedback(
 		result.Confidence = minTopicConfidence
 	}
 
+	topicID := toID(result.Name, 0)
+	evidence := model.TopicEvidence{Sessions: 1, EditedFiles: len(summary.EditedFiles), ReadFiles: len(summary.ReadFiles), LastActive: lastEventDate(events)}
 	topic := model.TopicContext{
-		ID:             toID(result.Name, 0),
+		ID:             topicID,
 		Name:           result.Name,
 		Summary:        result.Summary,
 		Confidence:     result.Confidence,
@@ -149,19 +151,16 @@ func GenerateTopicContextFromFeedback(
 		Tests: model.TopicTests{
 			StartWith: result.Tests.StartWith,
 			Signal:    result.Tests.Signal,
-			Notes:     result.Tests.Notes,
+			Notes:     textGuidanceItems(topicID, "tests.notes", result.Tests.Notes, result.Confidence, evidence),
 			Commands:  result.Tests.Commands,
 		},
-		KnownWorkflows:   result.KnownWorkflows,
-		AvoidWastingTime: result.AvoidWastingTime,
-		RiskFlags:        result.RiskFlags,
-		Evidence: model.TopicEvidence{
-			Sessions:    1,
-			EditedFiles: len(summary.EditedFiles),
-			ReadFiles:   len(summary.ReadFiles),
-			LastActive:  lastEventDate(events),
-		},
+		ScopeBoundaries:  guidanceItems(topicID, "scope_boundaries", result.ScopeBoundaries, result.Confidence, evidence),
+		KnownWorkflows:   guidanceItems(topicID, "known_workflows", result.KnownWorkflows, result.Confidence, evidence),
+		AvoidWastingTime: guidanceItems(topicID, "avoid_wasting_time", result.AvoidWastingTime, result.Confidence, evidence),
+		RiskFlags:        textGuidanceItems(topicID, "risk_flags", result.RiskFlags, result.Confidence, evidence),
+		Evidence:         evidence,
 	}
+	model.EnsureTopicProvenance(&topic)
 	return &topic, "", usage, nil
 }
 
@@ -867,6 +866,23 @@ type llmTests struct {
 	Commands  []string `json:"commands,omitempty"`
 }
 
+type llmGuidanceItem struct {
+	Text     string   `json:"text"`
+	Steps    []string `json:"steps,omitempty"`
+	Files    []string `json:"files,omitempty"`
+	Severity string   `json:"severity,omitempty"`
+}
+
+func (item *llmGuidanceItem) UnmarshalJSON(data []byte) error {
+	var text string
+	if err := json.Unmarshal(data, &text); err == nil {
+		item.Text = text
+		return nil
+	}
+	type plain llmGuidanceItem
+	return json.Unmarshal(data, (*plain)(item))
+}
+
 type llmTopicResult struct {
 	GroupIDs         []string          `json:"group_ids,omitempty"`
 	Name             string            `json:"name"`
@@ -877,9 +893,10 @@ type llmTopicResult struct {
 	StartHere        []llmStartFile    `json:"start_here"`
 	ImportantFiles   llmImportantFiles `json:"important_files"`
 	Tests            llmTests          `json:"tests"`
-	KnownWorkflows   []string          `json:"known_workflows"`
-	AvoidWastingTime []string          `json:"avoid_wasting_time"`
+	KnownWorkflows   []llmGuidanceItem `json:"known_workflows"`
+	AvoidWastingTime []llmGuidanceItem `json:"avoid_wasting_time"`
 	RiskFlags        []string          `json:"risk_flags"`
+	ScopeBoundaries  []llmGuidanceItem `json:"scope_boundaries,omitempty"`
 	Evidence         struct {
 		Reason                string   `json:"reason"`
 		RepresentativePrompts []string `json:"representative_prompts"`
@@ -957,8 +974,10 @@ func materializeTopicContexts(results []llmTopicResult, groupByID map[string]top
 		}
 
 		evidence := aggregateTopicEvidence(groupIDs, groupByID)
-		topics = append(topics, model.TopicContext{
-			ID:             toID(result.Name, i),
+		topicID := toID(result.Name, i)
+		topicEvidence := model.TopicEvidence{Sessions: evidence.sessions, EditedFiles: evidence.editedFiles, ReadFiles: evidence.readFiles, LastActive: evidence.lastActive}
+		topic := model.TopicContext{
+			ID:             topicID,
 			Name:           result.Name,
 			Summary:        result.Summary,
 			Confidence:     result.Confidence,
@@ -974,19 +993,17 @@ func materializeTopicContexts(results []llmTopicResult, groupByID map[string]top
 			Tests: model.TopicTests{
 				StartWith: result.Tests.StartWith,
 				Signal:    result.Tests.Signal,
-				Notes:     result.Tests.Notes,
+				Notes:     textGuidanceItems(topicID, "tests.notes", result.Tests.Notes, result.Confidence, topicEvidence),
 				Commands:  result.Tests.Commands,
 			},
-			KnownWorkflows:   result.KnownWorkflows,
-			AvoidWastingTime: result.AvoidWastingTime,
-			RiskFlags:        result.RiskFlags,
-			Evidence: model.TopicEvidence{
-				Sessions:    evidence.sessions,
-				EditedFiles: evidence.editedFiles,
-				ReadFiles:   evidence.readFiles,
-				LastActive:  evidence.lastActive,
-			},
-		})
+			ScopeBoundaries:  guidanceItems(topicID, "scope_boundaries", result.ScopeBoundaries, result.Confidence, topicEvidence),
+			KnownWorkflows:   guidanceItems(topicID, "known_workflows", result.KnownWorkflows, result.Confidence, topicEvidence),
+			AvoidWastingTime: guidanceItems(topicID, "avoid_wasting_time", result.AvoidWastingTime, result.Confidence, topicEvidence),
+			RiskFlags:        textGuidanceItems(topicID, "risk_flags", result.RiskFlags, result.Confidence, topicEvidence),
+			Evidence:         topicEvidence,
+		}
+		model.EnsureTopicProvenance(&topic)
+		topics = append(topics, topic)
 	}
 	return topics
 }
@@ -1035,8 +1052,10 @@ func fallbackTopicContexts(candidates []topicCandidate) []model.TopicContext {
 	topics := make([]model.TopicContext, 0, len(candidates))
 	for i, candidate := range candidates {
 		result := fallbackTopicResult(candidate)
-		topics = append(topics, model.TopicContext{
-			ID:             toID(result.Name, i),
+		topicID := toID(result.Name, i)
+		evidence := model.TopicEvidence{Sessions: candidate.subsystem.Sessions, EditedFiles: candidate.subsystem.SourceEdits + candidate.subsystem.TestEdits, ReadFiles: candidate.readFiles, LastActive: candidate.lastActive}
+		topic := model.TopicContext{
+			ID:             topicID,
 			Name:           result.Name,
 			Summary:        result.Summary,
 			Confidence:     result.Confidence,
@@ -1052,19 +1071,17 @@ func fallbackTopicContexts(candidates []topicCandidate) []model.TopicContext {
 			Tests: model.TopicTests{
 				StartWith: result.Tests.StartWith,
 				Signal:    result.Tests.Signal,
-				Notes:     result.Tests.Notes,
+				Notes:     textGuidanceItems(topicID, "tests.notes", result.Tests.Notes, result.Confidence, evidence),
 				Commands:  result.Tests.Commands,
 			},
-			KnownWorkflows:   result.KnownWorkflows,
-			AvoidWastingTime: result.AvoidWastingTime,
-			RiskFlags:        result.RiskFlags,
-			Evidence: model.TopicEvidence{
-				Sessions:    candidate.subsystem.Sessions,
-				EditedFiles: candidate.subsystem.SourceEdits + candidate.subsystem.TestEdits,
-				ReadFiles:   candidate.readFiles,
-				LastActive:  candidate.lastActive,
-			},
-		})
+			ScopeBoundaries:  guidanceItems(topicID, "scope_boundaries", result.ScopeBoundaries, result.Confidence, evidence),
+			KnownWorkflows:   guidanceItems(topicID, "known_workflows", result.KnownWorkflows, result.Confidence, evidence),
+			AvoidWastingTime: guidanceItems(topicID, "avoid_wasting_time", result.AvoidWastingTime, result.Confidence, evidence),
+			RiskFlags:        textGuidanceItems(topicID, "risk_flags", result.RiskFlags, result.Confidence, evidence),
+			Evidence:         evidence,
+		}
+		model.EnsureTopicProvenance(&topic)
+		topics = append(topics, topic)
 	}
 	return topics
 }
@@ -1245,8 +1262,8 @@ func fallbackTopicResult(c topicCandidate) llmTopicResult {
 			Notes:     notes,
 			Commands:  observedTestCommands(c.commands),
 		},
-		KnownWorkflows:   workflows,
-		AvoidWastingTime: avoid,
+		KnownWorkflows:   llmGuidanceItems(workflows),
+		AvoidWastingTime: llmGuidanceItems(avoid),
 		RiskFlags:        fallbackRiskFlags(c),
 	}
 }
@@ -1261,6 +1278,37 @@ func observedTestCommands(commands []commandEntry) []string {
 		}
 	}
 	return out
+}
+
+func llmGuidanceItems(values []string) []llmGuidanceItem {
+	items := make([]llmGuidanceItem, 0, len(values))
+	for _, value := range values {
+		items = append(items, llmGuidanceItem{Text: value})
+	}
+	return items
+}
+
+func guidanceItems(topicID, section string, values []llmGuidanceItem, confidence float64, evidence model.TopicEvidence) []model.TopicGuidanceItem {
+	items := make([]model.TopicGuidanceItem, 0, len(values))
+	for _, value := range values {
+		if strings.TrimSpace(value.Text) == "" {
+			continue
+		}
+		item := model.TopicGuidanceItem{
+			Text:       value.Text,
+			Steps:      dedupeStrings(value.Steps),
+			Files:      dedupeStrings(value.Files),
+			Severity:   value.Severity,
+			Confidence: confidence,
+		}
+		model.EnsureTopicGuidanceItem(topicID, section, &item, evidence)
+		items = append(items, item)
+	}
+	return items
+}
+
+func textGuidanceItems(topicID, section string, values []string, confidence float64, evidence model.TopicEvidence) []model.TopicGuidanceItem {
+	return guidanceItems(topicID, section, llmGuidanceItems(values), confidence, evidence)
 }
 
 func fallbackTopicName(c topicCandidate) string {

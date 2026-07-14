@@ -31,11 +31,11 @@ func (f *fakeLLM) GenerateRepoContext(_ context.Context, _ contracts.RepoAnalysi
 func (f *fakeLLM) GenerateTopicContextFromFeedback(_ context.Context, _, _ string, _ contracts.RepoAnalysisBundle, _ []model.SessionEvent, _ []model.TopicContext) (*model.TopicContext, string, ai.Usage, error) {
 	return nil, "", ai.Usage{}, nil
 }
-func (f *fakeLLM) SelectTopic(_ context.Context, _ string, _ []ai.TopicSummary, _ string, _ []string) (ai.SelectTopicResult, ai.Usage, error) {
+func (f *fakeLLM) SelectTopic(_ context.Context, _ string, _ []ai.TopicSummary, _ string, _ []string, _, _ []ai.TopicRoutingExample) (ai.SelectTopicResult, ai.Usage, error) {
 	return ai.SelectTopicResult{}, ai.Usage{}, nil
 }
-func (f *fakeLLM) WriteOrientationHint(_ context.Context, _ string, _ model.TopicContext, _ string, _ []string, _ []ai.PriorSession) (string, bool, ai.Usage, error) {
-	return "", false, ai.Usage{}, nil
+func (f *fakeLLM) SelectAdvice(_ context.Context, _ string, _ model.TopicContext, _ []ai.AdviceItem, _ ai.SelectionBudget, _, _ []ai.TopicRoutingExample, _ []model.MCPFeedback) (ai.AdviceSelectionResponse, ai.Usage, error) {
+	return ai.AdviceSelectionResponse{}, ai.Usage{}, nil
 }
 func (f *fakeLLM) ClassifyFeedback(_ context.Context, _ *model.MCPFeedback) (*model.FeedbackClassification, ai.Usage, error) {
 	return nil, ai.Usage{}, nil

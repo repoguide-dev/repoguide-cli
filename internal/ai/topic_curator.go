@@ -107,6 +107,52 @@ func CurateTopicContext(ctx context.Context, topic *model.TopicContext, feedback
 // It is idempotent: ops that would add duplicates are silently skipped.
 // The caller is responsible for passing only suggestions that should be applied.
 func ApplyTopicCuration(topic model.TopicContext, suggestions []TopicCurationSuggestion) model.TopicContext {
+	model.EnsureTopicProvenance(&topic)
+	setItemProvenance := func(section, itemKey string, suggestion TopicCurationSuggestion) {
+		if section == "" || itemKey == "" {
+			return
+		}
+		provenance := model.TopicProvenance{
+			SourceType:  model.TopicProvenanceSourceUserFeedback,
+			FeedbackIDs: append([]string(nil), suggestion.EvidenceFeedbackIDs...),
+			Status:      model.TopicStatusActive,
+		}
+		topic.ItemProvenance[model.TopicItemProvenanceKey(section, itemKey)] = provenance
+		if _, ok := topic.SectionProvenance[section]; !ok {
+			topic.SectionProvenance[section] = provenance
+		}
+	}
+	decodeGuidance := func(raw json.RawMessage) (model.TopicGuidanceItem, bool) {
+		var text string
+		if json.Unmarshal(raw, &text) == nil {
+			return model.TopicGuidanceItem{Text: text}, text != ""
+		}
+		var value model.TopicGuidanceItem
+		if json.Unmarshal(raw, &value) != nil || value.Text == "" {
+			return model.TopicGuidanceItem{}, false
+		}
+		return value, true
+	}
+	addGuidance := func(section string, value model.TopicGuidanceItem, suggestion TopicCurationSuggestion, target *[]model.TopicGuidanceItem) {
+		if value.Text == "" || slices.ContainsFunc(*target, func(item model.TopicGuidanceItem) bool { return item.Text == value.Text }) {
+			return
+		}
+		item := model.TopicGuidanceItem{
+			Text:       value.Text,
+			Steps:      append([]string(nil), value.Steps...),
+			Files:      append([]string(nil), value.Files...),
+			Severity:   value.Severity,
+			Confidence: float64(suggestion.Confidence) / 5,
+		}
+		model.EnsureTopicGuidanceItem(topic.ID, section, &item, topic.Evidence)
+		item.Provenance = model.TopicProvenance{
+			SourceType:  model.TopicProvenanceSourceUserFeedback,
+			FeedbackIDs: append([]string(nil), suggestion.EvidenceFeedbackIDs...),
+			Status:      model.TopicStatusActive,
+		}
+		*target = append(*target, item)
+		setItemProvenance(section, item.ID, suggestion)
+	}
 	for _, s := range suggestions {
 		switch s.Kind {
 		case "noop_duplicate":
@@ -116,24 +162,29 @@ func ApplyTopicCuration(topic model.TopicContext, suggestions []TopicCurationSug
 			var v string
 			if json.Unmarshal(s.Value, &v) == nil && v != "" && !slices.Contains(topic.WhenToUse, v) {
 				topic.WhenToUse = append(topic.WhenToUse, v)
+				setItemProvenance("when_to_use", v, s)
 			}
 
 		case "add_prompt_keyword":
 			var v string
 			if json.Unmarshal(s.Value, &v) == nil && v != "" && !slices.Contains(topic.PromptKeywords, v) {
 				topic.PromptKeywords = append(topic.PromptKeywords, v)
+				setItemProvenance("prompt_keywords", v, s)
 			}
 
 		case "add_known_workflow":
-			var v string
-			if json.Unmarshal(s.Value, &v) == nil && v != "" && !slices.Contains(topic.KnownWorkflows, v) {
-				topic.KnownWorkflows = append(topic.KnownWorkflows, v)
+			if v, ok := decodeGuidance(s.Value); ok {
+				addGuidance("known_workflows", v, s, &topic.KnownWorkflows)
 			}
 
 		case "add_avoid_wasting_time":
-			var v string
-			if json.Unmarshal(s.Value, &v) == nil && v != "" && !slices.Contains(topic.AvoidWastingTime, v) {
-				topic.AvoidWastingTime = append(topic.AvoidWastingTime, v)
+			if v, ok := decodeGuidance(s.Value); ok {
+				addGuidance("avoid_wasting_time", v, s, &topic.AvoidWastingTime)
+			}
+
+		case "add_scope_boundary":
+			if v, ok := decodeGuidance(s.Value); ok {
+				addGuidance("scope_boundaries", v, s, &topic.ScopeBoundaries)
 			}
 
 		case "add_risk_flag", "mark_stale":
@@ -141,15 +192,14 @@ func ApplyTopicCuration(topic model.TopicContext, suggestions []TopicCurationSug
 			if s.Kind == "mark_stale" {
 				flag = "stale"
 			}
-			if flag != "" && !slices.Contains(topic.RiskFlags, flag) {
-				topic.RiskFlags = append(topic.RiskFlags, flag)
-			}
+			addGuidance("risk_flags", model.TopicGuidanceItem{Text: flag}, s, &topic.RiskFlags)
 
 		case "add_start_here":
 			var f model.TopicStartFile
 			if json.Unmarshal(s.Value, &f) == nil && f.Path != "" {
 				if !slices.ContainsFunc(topic.StartHere, func(x model.TopicStartFile) bool { return x.Path == f.Path }) {
 					topic.StartHere = append(topic.StartHere, f)
+					setItemProvenance("start_here", f.Path, s)
 				}
 			}
 
@@ -161,6 +211,7 @@ func ApplyTopicCuration(topic model.TopicContext, suggestions []TopicCurationSug
 				for i := range topic.StartHere {
 					if topic.StartHere[i].Path == s.Path {
 						topic.StartHere[i].Why = v.Why
+						setItemProvenance("start_here", s.Path, s)
 						break
 					}
 				}
@@ -170,6 +221,7 @@ func ApplyTopicCuration(topic model.TopicContext, suggestions []TopicCurationSug
 			target := fileListPtr(&topic.ImportantFiles, s.TargetField)
 			if target != nil && s.Path != "" && !slices.Contains(*target, s.Path) {
 				*target = append(*target, s.Path)
+				setItemProvenance(s.TargetField, s.Path, s)
 			}
 
 		case "remove_item":
@@ -187,19 +239,24 @@ func ApplyTopicCuration(topic model.TopicContext, suggestions []TopicCurationSug
 			case "known_workflows":
 				var v string
 				if json.Unmarshal(s.Value, &v) == nil {
-					topic.KnownWorkflows = slices.DeleteFunc(topic.KnownWorkflows, func(x string) bool { return x == v })
+					topic.KnownWorkflows = slices.DeleteFunc(topic.KnownWorkflows, func(x model.TopicGuidanceItem) bool { return x.ID == v || x.Text == v })
 				}
 			case "avoid_wasting_time":
 				var v string
 				if json.Unmarshal(s.Value, &v) == nil {
-					topic.AvoidWastingTime = slices.DeleteFunc(topic.AvoidWastingTime, func(x string) bool { return x == v })
+					topic.AvoidWastingTime = slices.DeleteFunc(topic.AvoidWastingTime, func(x model.TopicGuidanceItem) bool { return x.ID == v || x.Text == v })
+				}
+			case "scope_boundaries":
+				var v string
+				if json.Unmarshal(s.Value, &v) == nil {
+					topic.ScopeBoundaries = slices.DeleteFunc(topic.ScopeBoundaries, func(x model.TopicGuidanceItem) bool { return x.ID == v || x.Text == v })
 				}
 			case "risk_flags":
 				flag := s.Path
 				if flag == "" {
 					_ = json.Unmarshal(s.Value, &flag)
 				}
-				topic.RiskFlags = slices.DeleteFunc(topic.RiskFlags, func(x string) bool { return x == flag })
+				topic.RiskFlags = slices.DeleteFunc(topic.RiskFlags, func(x model.TopicGuidanceItem) bool { return x.ID == flag || x.Text == flag })
 			case "start_here":
 				topic.StartHere = slices.DeleteFunc(topic.StartHere, func(x model.TopicStartFile) bool { return x.Path == s.Path })
 			default:
@@ -226,6 +283,7 @@ func ApplyTopicCuration(topic model.TopicContext, suggestions []TopicCurationSug
 			}
 		}
 	}
+	model.EnsureTopicProvenance(&topic)
 	return topic
 }
 

@@ -611,7 +611,7 @@ func (s *feedbackStore) ListUnprocessedFeedback(ctx context.Context, repoID stri
 }
 
 func (s *feedbackStore) ListActionableFeedback(ctx context.Context, repoID string) ([]model.MCPFeedback, error) {
-	return s.listFeedback(ctx, `SELECT feedback_json FROM feedback WHERE repo_id=?`, repoID)
+	return s.listFeedback(ctx, `SELECT feedback_json FROM feedback WHERE repo_id=? ORDER BY created_at DESC`, repoID)
 }
 
 func (s *feedbackStore) ListFeedbackByIDs(ctx context.Context, ids []string) ([]model.MCPFeedback, error) {

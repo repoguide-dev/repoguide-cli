@@ -181,6 +181,31 @@ func TestMaterializeTopicContextsAllowsSubsetOfGroups(t *testing.T) {
 	}
 }
 
+func TestMaterializeTopicContextsPreservesStructuredGuidance(t *testing.T) {
+	groups := map[string]topicCandidate{"ui": {subsystem: contracts.RepoAnalysisSubsystem{Sessions: 3}}}
+	topics := materializeTopicContexts([]llmTopicResult{{
+		GroupIDs:   []string{"ui"},
+		Name:       "Shared UI Models",
+		Summary:    "Covers shared UI model changes.",
+		Confidence: 0.9,
+		KnownWorkflows: []llmGuidanceItem{{
+			Text: "Propagate canonical model changes", Steps: []string{"Edit model.go", "Update api.ts"}, Files: []string{"model.go", "api.ts"},
+		}},
+		AvoidWastingTime: []llmGuidanceItem{{Text: "Do not edit generated types", Severity: "warning", Files: []string{"generated.ts"}}},
+	}}, groups, []string{"ui"})
+	if len(topics) != 1 || len(topics[0].KnownWorkflows) != 1 || len(topics[0].AvoidWastingTime) != 1 {
+		t.Fatalf("structured guidance missing: %#v", topics)
+	}
+	workflow := topics[0].KnownWorkflows[0]
+	if workflow.ID == "" || len(workflow.Steps) != 2 || len(workflow.Files) != 2 {
+		t.Fatalf("workflow = %#v", workflow)
+	}
+	warning := topics[0].AvoidWastingTime[0]
+	if warning.ID == "" || warning.Severity != "warning" || len(warning.Files) != 1 {
+		t.Fatalf("warning = %#v", warning)
+	}
+}
+
 func TestMaterializeTopicContextsSkipsLowConfidenceTopics(t *testing.T) {
 	groupByID := map[string]topicCandidate{
 		"backend_server": {

@@ -287,6 +287,13 @@ func installCodexPlugin(binPath string, installHooks bool) error {
 	// Register marketplace (idempotent — ignore error if already present).
 	_ = exec.Command("codex", "plugin", "marketplace", "add", marketDir).Run()
 
+	// Codex does not reload an already-installed plugin when its local
+	// marketplace files change. Remove it first so a repeated `mcp install`
+	// picks up the current MCP command and hook definition. This is especially
+	// important for the local build, whose plugin and binary are named
+	// repoguide-local and must not keep using the released CLI's hook command.
+	_ = exec.Command("codex", "plugin", "remove", mcpPluginName+"@"+repoguideMarketplace).Run()
+
 	cmd := exec.Command("codex", "plugin", "add", mcpPluginName+"@"+repoguideMarketplace)
 	out, err := cmd.CombinedOutput()
 	if err != nil {

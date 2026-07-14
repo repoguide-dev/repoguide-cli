@@ -4,6 +4,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
 )
@@ -45,6 +46,12 @@ func TestSetManagedCommitHooksInstallAndUninstall(t *testing.T) {
 		}
 		if !strings.Contains(string(data), managedHookStart) {
 			t.Fatalf("%s missing managed hook block: %q", name, string(data))
+		}
+		if strings.Contains(string(data), "command -v repoguide") {
+			t.Fatalf("%s should invoke the installing executable directly: %q", name, string(data))
+		}
+		if !strings.Contains(string(data), strconv.Quote(managedHookBinaryPath())) {
+			t.Fatalf("%s should invoke %q: %q", name, managedHookBinaryPath(), string(data))
 		}
 	}
 

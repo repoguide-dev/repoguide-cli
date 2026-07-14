@@ -1260,7 +1260,12 @@ func (c CloudClient) localGetMCPUnderstandTask(repoID, task, topicID string, pro
 		Status:            out.Status,
 		Explanation:       out.Explanation,
 		TopicID:           out.TopicID,
+		MatchConfidence:   out.MatchConfidence,
 		ContextText:       out.ContextText,
+		SelectedAdvice:    out.SelectedAdvice,
+		Reason:            out.Reason,
+		Question:          out.Question,
+		CandidateTopics:   out.CandidateTopics,
 		CandidateTopicIDs: out.CandidateTopicIDs,
 	}, nil
 }
