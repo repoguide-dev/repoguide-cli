@@ -156,9 +156,15 @@ func runInit(cmd *cobra.Command, _ []string) error {
 		if err := c.RegisterRepo(result.RepoID, result.RepoRoot); err != nil {
 			return fmt.Errorf("repo initialized locally, but backend repo registration failed: %w", err)
 		}
-		if err := c.UploadRepoEvents(result.RepoID, result.RepoRoot); err != nil {
+		RunWithSpinner("Uploading session history", func(progress func(int, int, string)) struct{} {
+			c.Progress = progress
+			err = c.UploadRepoEvents(result.RepoID, result.RepoRoot)
+			return struct{}{}
+		})
+		if err != nil {
 			return fmt.Errorf("repo initialized locally, but backend repo events upload failed: %w", err)
 		}
+		fmt.Println("Initial analysis can take up to 10 minutes.")
 		RunWithSpinner("Analyzing repo", func(_ func(int, int, string)) struct{} {
 			if analyzeErr := c.TriggerAnalyze(result.RepoID, false); analyzeErr != nil {
 				msg := analyzeErr.Error()

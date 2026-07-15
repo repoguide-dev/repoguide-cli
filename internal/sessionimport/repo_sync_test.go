@@ -315,9 +315,19 @@ func TestCloudClientUploadRepoEvents(t *testing.T) {
 	}))
 	defer server.Close()
 
-	client := CloudClient{BaseURL: server.URL, Token: "test-token"}
+	var progressCurrent, progressTotal int
+	client := CloudClient{
+		BaseURL: server.URL,
+		Token:   "test-token",
+		Progress: func(current, total int, _ string) {
+			progressCurrent, progressTotal = current, total
+		},
+	}
 	if err := client.UploadRepoEvents(repo.RepoID, repo.RepoRoot); err != nil {
 		t.Fatalf("UploadRepoEvents returned error: %v", err)
+	}
+	if progressCurrent != 1 || progressTotal != 1 {
+		t.Fatalf("progress = %d/%d, want 1/1", progressCurrent, progressTotal)
 	}
 	if len(gotEvents) != 3 || gotEvents[2]["text"] != "inspect repo" {
 		t.Fatalf("unexpected uploaded events: %#v", gotEvents)

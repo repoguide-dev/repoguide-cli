@@ -27,6 +27,9 @@ import (
 const (
 	defaultBackendTimeout = time.Minute
 	analyzeBackendTimeout = 5 * time.Minute
+	// Cloudflare rejects uploads around 1 MiB before they reach the backend.
+	// Keep event archives deliberately small so a large local history can sync.
+	maxSessionsPerRepoEventsUpload = 10
 )
 
 var verifiedBackendHosts = map[string]struct{}{
@@ -38,6 +41,7 @@ type CloudClient struct {
 	BaseURL      string
 	Token        string
 	Client       *http.Client
+	Progress     func(current, total int, label string)
 	AgentName    string
 	AgentVersion string
 	SessionID    string
@@ -485,26 +489,33 @@ func (c CloudClient) UploadRepoEvents(repoID, repoRoot string) error {
 		since = *cfg.LastSyncedAt
 	}
 
-	payload, n, err := buildRepoEventsZip(repoID, repoRoot, since)
+	uploads, err := buildRepoEventsUploads(repoID, repoRoot, since)
 	if err != nil {
 		return err
 	}
-	if n == 0 {
+	if len(uploads) == 0 {
 		return nil
 	}
-	req, err := c.newRequest(http.MethodPost, "/api/repos/"+url.PathEscape(repoID)+"/events/", bytes.NewReader(payload))
-	if err != nil {
-		return err
-	}
-	req.Header.Set("Authorization", "Bearer "+c.Token)
-	req.Header.Set("Content-Type", "application/zip")
-	resp, err := c.httpClient().Do(req)
-	if err != nil {
-		return err
-	}
-	defer resp.Body.Close()
-	if resp.StatusCode >= 300 {
-		return backendRequestError("backend repo events upload failed", resp)
+	for i, payload := range uploads {
+		req, err := c.newRequest(http.MethodPost, "/api/repos/"+url.PathEscape(repoID)+"/events/", bytes.NewReader(payload))
+		if err != nil {
+			return err
+		}
+		req.Header.Set("Authorization", "Bearer "+c.Token)
+		req.Header.Set("Content-Type", "application/zip")
+		resp, err := c.httpClient().Do(req)
+		if err != nil {
+			return err
+		}
+		if resp.StatusCode >= 300 {
+			err := backendRequestError("backend repo events upload failed", resp)
+			resp.Body.Close()
+			return err
+		}
+		resp.Body.Close()
+		if c.Progress != nil {
+			c.Progress(i+1, len(uploads), fmt.Sprintf("Batch %d uploaded", i+1))
+		}
 	}
 
 	now := time.Now().UTC()
@@ -562,15 +573,58 @@ func buildRepoEventsZip(repoID, repoRoot string, since time.Time) ([]byte, int, 
 		return nil, 0, fmt.Errorf("repo session index not found for %s", repoID)
 	}
 
+	return buildRepoEventsZipForSessions(repoID, repoRoot, sessions, true)
+}
+
+func buildRepoEventsUploads(repoID, repoRoot string, since time.Time) ([][]byte, error) {
+	sessions, ok, err := loadRepoSessionSummaries(repoID)
+	if err != nil {
+		return nil, err
+	}
+	if !ok {
+		return nil, fmt.Errorf("repo session index not found for %s", repoID)
+	}
+	if !since.IsZero() {
+		filtered := sessions[:0]
+		for _, session := range sessions {
+			if session.Timestamp.After(since) {
+				filtered = append(filtered, session)
+			}
+		}
+		sessions = filtered
+	}
+
+	var uploads [][]byte
+	for start := 0; start < len(sessions); start += maxSessionsPerRepoEventsUpload {
+		end := start + maxSessionsPerRepoEventsUpload
+		if end > len(sessions) {
+			end = len(sessions)
+		}
+		payload, _, err := buildRepoEventsZipForSessions(repoID, repoRoot, sessions[start:end], start == 0)
+		if err != nil {
+			return nil, err
+		}
+		uploads = append(uploads, payload)
+	}
+	if len(sessions) == 0 {
+		payload, n, err := buildRepoEventsZipForSessions(repoID, repoRoot, nil, true)
+		if err != nil {
+			return nil, err
+		}
+		if n > 0 {
+			uploads = append(uploads, payload)
+		}
+	}
+	return uploads, nil
+}
+
+func buildRepoEventsZipForSessions(repoID, repoRoot string, sessions []SessionSummary, includeMetadata bool) ([]byte, int, error) {
 	storeDir := filepath.Join(RepoGuideDir(), "repos", repoID)
 	cfg, _ := LoadRepoConfigFile(storeDir)
 	var n int
 	var buf bytes.Buffer
 	zw := zip.NewWriter(&buf)
 	for _, session := range sessions {
-		if !since.IsZero() && !session.Timestamp.After(since) {
-			continue
-		}
 		eventsPath := filepath.Join(RepoGuideDir(), "sessions", session.ID, sessionEventLogFileName)
 		data, err := os.ReadFile(eventsPath)
 		if err != nil {
@@ -590,36 +644,38 @@ func buildRepoEventsZip(repoID, repoRoot string, since time.Time) ([]byte, int, 
 		n++
 	}
 
-	if docs := readHintFileDocsFromConfig(cfg, repoRoot); len(docs) > 0 {
-		data, err := json.Marshal(docs)
-		if err != nil {
-			return nil, 0, err
+	if includeMetadata {
+		if docs := readHintFileDocsFromConfig(cfg, repoRoot); len(docs) > 0 {
+			data, err := json.Marshal(docs)
+			if err != nil {
+				return nil, 0, err
+			}
+			entry, err := zw.Create("docs.json")
+			if err != nil {
+				return nil, 0, err
+			}
+			if _, err := entry.Write(data); err != nil {
+				return nil, 0, err
+			}
+			n++
 		}
-		entry, err := zw.Create("docs.json")
-		if err != nil {
-			return nil, 0, err
-		}
-		if _, err := entry.Write(data); err != nil {
-			return nil, 0, err
-		}
-		n++
-	}
 
-	aliases := buildRepoPathAliases(repoRoot)
-	commits := buildRecentGitCommits(repoRoot, 100)
-	if len(aliases) > 0 || len(commits) > 0 {
-		data, err := json.Marshal(map[string]any{"path_aliases": aliases, "commits": commits})
-		if err != nil {
-			return nil, 0, err
+		aliases := buildRepoPathAliases(repoRoot)
+		commits := buildRecentGitCommits(repoRoot, 100)
+		if len(aliases) > 0 || len(commits) > 0 {
+			data, err := json.Marshal(map[string]any{"path_aliases": aliases, "commits": commits})
+			if err != nil {
+				return nil, 0, err
+			}
+			entry, err := zw.Create("git_history.json")
+			if err != nil {
+				return nil, 0, err
+			}
+			if _, err := entry.Write(data); err != nil {
+				return nil, 0, err
+			}
+			n++
 		}
-		entry, err := zw.Create("git_history.json")
-		if err != nil {
-			return nil, 0, err
-		}
-		if _, err := entry.Write(data); err != nil {
-			return nil, 0, err
-		}
-		n++
 	}
 
 	if err := zw.Close(); err != nil {
