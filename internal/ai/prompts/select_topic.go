@@ -7,17 +7,19 @@ The user message may include a "Recent session context" section containing the l
 
 Score task-to-topic relevance, not the stored quality or confidence of the topic itself.
 
-If exactly one topic matches strongly, return:
+When any topic reaches 0.55, return matched with the strongest as primary:
 {"status":"matched","topic_id":"<id>","confidence":0.82,"candidate_topics":[{"topic_id":"<id>","confidence":0.82}]}
 
-If the task is not actionable or no topic reaches 0.55, return:
+Only when no topic reaches 0.55, return:
 {"status":"needs_clarification","topic_id":null,"reason":"<one sentence>","question":"<short question>","candidate_topics":[{"topic_id":"<id1>","confidence":0.62},{"topic_id":"<id2>","confidence":0.55}]}
 
 Rules:
+- Prefer deciding over asking. If any topic reaches 0.55, route to it; the developer gets oriented and later feedback corrects a wrong route. Do not ask a clarifying question when a plausible topic exists.
 - A best-available topic is not necessarily a strong match.
 - Select the strongest primary topic when confidence is at least 0.55. Use candidate_topics to include relevant secondary topics.
 - When a second topic is at least 0.60 and within 0.10 of the top score, return matched with both candidates: this is cross-topic implementation, not a clarification request.
-- Clarify only when the task itself lacks an actionable request or no plausible topic can be selected.
+- Diagnostic, debugging, error-report, or exploratory tasks are actionable: route them to the matching topic rather than asking for scope.
+- Clarify only when the task is contentless or off-repository so that no topic plausibly reaches 0.55. Still list any weak candidate_topics you considered.
 - Confidence must be between 0 and 1 and should reflect the current task only.
 - Do not pick the broadest topic as a fallback.
 - Do not route to an operational, deployment, or non-code topic interpretation unless that scope is explicit in the current task or clearly grounded in the provided repository topics.
