@@ -1029,7 +1029,16 @@ func nameTopics(ctx context.Context, candidates []topicCandidate, repoCtx string
 			return nil, usage, result.err
 		}
 		groupID := groupOrder[index]
-		topics = append(topics, materializeTopicContexts(result.named, groupByID, []string{groupID})...)
+		materialized := materializeTopicContexts(result.named, groupByID, []string{groupID})
+		for i := range materialized {
+			if existing, ok := existingByID[materialized[i].ID]; ok && materialized[i].Evidence.Sessions > 0 {
+				materialized[i].Confidence += (0.95 - materialized[i].Confidence) * 0.04
+				if materialized[i].Confidence < existing.Confidence {
+					materialized[i].Confidence = existing.Confidence
+				}
+			}
+		}
+		topics = append(topics, materialized...)
 	}
 	return topics, usage, nil
 }

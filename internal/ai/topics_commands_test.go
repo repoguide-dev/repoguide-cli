@@ -134,6 +134,7 @@ func TestBuildFeedbackTopicPromptPrefersFocusedRecurringAreas(t *testing.T) {
 		"Create topics per domain area",
 		"Prefer the smallest recurring domain that will help routing",
 		"Use the broader session/group evidence when choosing files",
+		`"merge_into_topic_id"`,
 		`Avoid layer-only names like "Frontend" or "Backend", or other broad umbrella names`,
 	}
 	for _, want := range wants {

@@ -571,7 +571,17 @@ func (s *JobService) createNewTopic(ctx context.Context, j *model.ContextPatchJo
 		}
 		return model.TopicContext{}, nil
 	}
-	topics = append(topics, *newTopic)
+	replaced := false
+	for i := range topics {
+		if topics[i].ID == newTopic.ID {
+			topics[i] = *newTopic
+			replaced = true
+			break
+		}
+	}
+	if !replaced {
+		topics = append(topics, *newTopic)
+	}
 	if err := s.store.Topics().PutTopics(ctx, j.RepoID, topics); err != nil {
 		return model.TopicContext{}, err
 	}
