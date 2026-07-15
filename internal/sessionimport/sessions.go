@@ -43,7 +43,7 @@ type RepoSessionStats struct {
 	// online repo was deleted remotely. It is deliberately distinct from a
 	// network or authentication error, which must not prompt local deletion.
 	RemoteMissing bool
-	LastSynced  time.Time
+	LastSynced    time.Time
 }
 
 type codexIndexEntry struct {
