@@ -448,13 +448,10 @@ func (s *JobService) patchTopic(ctx context.Context, j *model.ContextPatchJob) e
 		// keep_pending: no action needed
 	}
 
-	updated := model.ApplyTopicFeedbackConfidence(*topic, feedbacks)
-	if len(toApply) > 0 {
-		updated = ai.ApplyTopicCuration(updated, toApply)
-	}
-	if len(toApply) == 0 && updated.Confidence == topic.Confidence {
+	if len(toApply) == 0 {
 		return s.store.Feedback().MarkFeedbacksProcessed(ctx, j.JobID, j.FeedbackIDs)
 	}
+	updated := ai.ApplyTopicCuration(*topic, toApply)
 	topics, err := s.store.Topics().GetTopics(ctx, j.RepoID)
 	if err != nil {
 		return err

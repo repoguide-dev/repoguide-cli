@@ -24,10 +24,12 @@ esac
 version="$(curl -fsSL "https://api.github.com/repos/$REPO/releases/latest" | grep -m1 '"tag_name"' | sed -E 's/.*"v?([^"]+)".*/\1/')"
 [ -n "$version" ] || { echo "error: could not determine latest version" >&2; exit 1; }
 
-if [ "$os" = windows ]; then
+if [ "$os" = windows ] || [ "$os" = darwin ]; then
   archive="repoguide_${version}_${os}_${arch}.zip"
+fi
+if [ "$os" = windows ]; then
   BIN="repoguide.exe"
-else
+elif [ "$os" != darwin ]; then
   archive="repoguide_${version}_${os}_${arch}.tar.gz"
 fi
 base_url="https://github.com/$REPO/releases/download/v${version}"
@@ -42,7 +44,7 @@ curl -fsSL "$base_url/checksums.txt" -o "$tmpdir/checksums.txt"
 echo "==> Verifying checksum"
 (cd "$tmpdir" && grep " $archive\$" checksums.txt | shasum -a 256 -c -)
 
-if [ "$os" = windows ]; then
+if [ "$os" = windows ] || [ "$os" = darwin ]; then
   unzip -q "$tmpdir/$archive" -d "$tmpdir"
 else
   tar -xzf "$tmpdir/$archive" -C "$tmpdir"

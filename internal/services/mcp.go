@@ -122,18 +122,18 @@ func (s *MCPService) buildTaskOutput(ctx context.Context, repoID, task string, t
 	sessions, _ := s.store.Events().Get(ctx, repoID)
 	pkg := experience.BuildTaskPackage(task, repoRoot, topic, sessions)
 	pkg = experience.SetSelectionBudget(pkg, matchCount)
-	sessionFeedback := experience.FeedbackForSessions(pkg.MatchingSessionIDs, feedback)
-	pkg = experience.ApplyAdviceFeedback(pkg, sessionFeedback)
-	positive, negative := experience.BuildRoutingExamples(sessionFeedback)
+	topicFeedback := experience.FeedbackForTopic(topic.ID, feedback)
+	pkg = experience.ApplyAdviceFeedback(pkg, topicFeedback)
+	positive, negative := experience.BuildTopicRoutingExamples(topic.ID, feedback)
 	if len(pkg.CandidateAdvice) > 0 {
-		if selected, _, err := s.ai.SelectAdvice(ctx, task, topic, pkg.CandidateAdvice, pkg.Budget, positive, negative, sessionFeedback); err == nil {
+		if selected, _, err := s.ai.SelectAdvice(ctx, task, topic, pkg.CandidateAdvice, pkg.Budget, positive, negative, topicFeedback); err == nil {
 			pkg = experience.SelectAdvice(pkg, selected)
 		}
 	}
 	return &UnderstandTaskOutput{
 		Status: "ok", TopicID: topic.ID, MatchConfidence: confidence,
 		ContextText: experience.RenderTaskPackage(topic, pkg), Explanation: explanation,
-		SelectedAdvice: experience.AdviceForClient(pkg.SelectedAdvice),
+		SelectedAdvice: pkg.SelectedAdvice,
 	}
 }
 
