@@ -46,6 +46,8 @@ func (m reposModel) renderList() string {
 			name = " " + repoDisplayName(repo.Repo)
 		}
 		parts = append(parts, "", renderDanger("Remove"+name+"? [y/N]"))
+	} else if m.remoteMissing != nil {
+		parts = append(parts, "", renderDanger(fmt.Sprintf("%s was deleted from RepoGuide Cloud. [d] delete local tracking  [i] re-initialize  [any other key] dismiss", repoDisplayName(m.remoteMissing.Repo))))
 	} else {
 		parts = append(parts, "", muted.Render(footerHint("enter show repo", "i init repo", "d remove repo", "r reload", "q quit")))
 	}
@@ -140,6 +142,9 @@ func repoDisplayName(repo internal.RepoConfig) string {
 }
 
 func repoStatusLabel(repo sessionimport.RepoSessionStats) string {
+	if repo.RemoteMissing {
+		return "missing"
+	}
 	switch repo.Repo.Mode {
 	case "local":
 		return "local"

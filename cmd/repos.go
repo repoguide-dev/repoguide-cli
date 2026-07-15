@@ -96,6 +96,7 @@ type reposModel struct {
 	agentCursor   int
 	sessionsChild sessionsModel
 	confirmDelete bool
+	remoteMissing *sessionimport.RepoSessionStats
 	focusRepoRoot string // if set, jump to this repo's detail view after load
 }
 
@@ -180,6 +181,13 @@ func (m reposModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.repos = msg.stats
 		m.applyRepoTableSize()
 		m.applyRepoTableData()
+		m.remoteMissing = nil
+		for i := range m.repos {
+			if m.repos[i].RemoteMissing {
+				m.remoteMissing = &m.repos[i]
+				break
+			}
+		}
 		if m.focusRepoRoot != "" {
 			for i, r := range m.repos {
 				if r.Repo.RepoRoot == m.focusRepoRoot {
@@ -221,6 +229,27 @@ func (m reposModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 }
 
 func (m reposModel) updateListView(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+	if m.remoteMissing != nil {
+		switch msg.String() {
+		case "d":
+			repo := m.remoteMissing
+			m.remoteMissing = nil
+			m.statusMessage = ""
+			m.loading = true
+			m.err = nil
+			return m, tea.Batch(m.spinner.Tick, removeRepoCmd(repo.Repo.RepoRoot, repo.Repo.RepoID))
+		case "i":
+			repo := m.remoteMissing
+			m.remoteMissing = nil
+			m.statusMessage = ""
+			m.loading = true
+			m.err = nil
+			return m, tea.Batch(m.spinner.Tick, initRepoCmd(repo.Repo.RepoRoot))
+		default:
+			m.remoteMissing = nil
+		}
+		return m, nil
+	}
 	if m.confirmDelete {
 		switch msg.String() {
 		case "y":
@@ -340,7 +369,14 @@ func loadRepoStatsCmd() tea.Cmd {
 				if stats[i].Repo.Mode == "local" {
 					continue
 				}
-				info, _ := client.GetRepo(stats[i].Repo.RepoID)
+				info, getErr := client.GetRepo(stats[i].Repo.RepoID)
+				// GetRepo returns nil without an error only when the server confirmed
+				// a 404. Do not treat connection and authentication failures as a
+				// deletion, since that could lead users to remove valid local data.
+				if getErr == nil && info == nil {
+					stats[i].RemoteMissing = true
+					continue
+				}
 				if info != nil {
 					stats[i].Online = true
 					stats[i].LastSynced = info.LastSynced

@@ -39,6 +39,10 @@ type RepoSessionStats struct {
 	AgentCounts map[string]int
 	Total       int
 	Online      bool
+	// RemoteMissing is set after an authenticated cloud lookup confirms that an
+	// online repo was deleted remotely. It is deliberately distinct from a
+	// network or authentication error, which must not prompt local deletion.
+	RemoteMissing bool
 	LastSynced  time.Time
 }
 
