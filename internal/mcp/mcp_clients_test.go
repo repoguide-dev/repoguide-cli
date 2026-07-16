@@ -208,3 +208,17 @@ func TestInstallCodexPluginSkipsHooksWhenDisabled(t *testing.T) {
 		t.Fatalf("expected hooks.json to be absent, stat err = %v", err)
 	}
 }
+
+func TestPatchGeminiRoutingHookAddsBeforeAgentCommand(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "settings.json")
+	if err := patchGeminiRoutingHook(path, "/tmp/repoguide"); err != nil {
+		t.Fatalf("patchGeminiRoutingHook: %v", err)
+	}
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("ReadFile: %v", err)
+	}
+	if !strings.Contains(string(data), "BeforeAgent") || !strings.Contains(string(data), "gemini-prompt") {
+		t.Fatalf("expected native Gemini routing hook, got %s", data)
+	}
+}

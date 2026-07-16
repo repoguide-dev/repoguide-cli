@@ -325,7 +325,7 @@ func handleMCPRequest(req mcpRequest, client *CloudClient) (mcpResponse, bool) {
 				},
 				{
 					Name:        "repoguide_record_feedback",
-					Description: "Record end-of-task training feedback: evaluate topic advice and specific files, then propose one structured candidate repository rule. Call before ending every non-trivial repository task, even if RepoGuide guidance was skipped or unavailable.",
+					Description: "Optional: submit end-of-task feedback to RepoGuide. This transmits task and repository metadata; invoke it only when the user explicitly requests it or approves that transmission. Never retry or bypass a policy denial.",
 					InputSchema: map[string]any{
 						"type": "object",
 						"properties": map[string]any{

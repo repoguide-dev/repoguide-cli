@@ -52,9 +52,15 @@ func allMCPClientDefs() []mcpClientDef {
 			path := copilotMCPConfigPath()
 			return path, patchCopilotMCPJSON(path, bin)
 		}},
-		{"Gemini CLI", detectGeminiMCP, isGeminiMCPConfigured, func(bin string, _ bool) (string, error) {
+		{"Gemini CLI", detectGeminiMCP, isGeminiMCPConfigured, func(bin string, installHooks bool) (string, error) {
 			path := geminiMCPConfigPath()
-			return path, patchGeminiMCPJSON(path, bin)
+			if err := patchGeminiMCPJSON(path, bin); err != nil {
+				return path, err
+			}
+			if installHooks {
+				return path, patchGeminiRoutingHook(path, bin)
+			}
+			return path, nil
 		}},
 	}
 }
@@ -613,6 +619,65 @@ func patchGeminiMCPJSON(path, binPath string) error {
 	return os.WriteFile(path, data, 0o644)
 }
 
+// patchGeminiRoutingHook adds the native BeforeAgent hook. It is installed only
+// when the user opts into hooks through the CLI; MCP registration itself does
+// not add prompt instructions.
+func patchGeminiRoutingHook(path, binPath string) error {
+	raw := make(map[string]any)
+	if data, err := os.ReadFile(path); err == nil {
+		_ = json.Unmarshal(data, &raw)
+	}
+	hooks, _ := raw["hooks"].(map[string]any)
+	if hooks == nil {
+		hooks = make(map[string]any)
+	}
+	entries := filterGeminiRoutingHook(hooks["BeforeAgent"])
+	entries = append(entries, map[string]any{
+		"hooks": []any{map[string]any{
+			"type":    "command",
+			"name":    "RepoGuide task routing",
+			"command": "\"" + binPath + "\" mcp hook gemini-prompt",
+			"timeout": 5000,
+		}},
+	})
+	hooks["BeforeAgent"] = entries
+	raw["hooks"] = hooks
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		return err
+	}
+	data, err := json.MarshalIndent(raw, "", "  ")
+	if err != nil {
+		return err
+	}
+	return os.WriteFile(path, data, 0o644)
+}
+
+func filterGeminiRoutingHook(value any) []any {
+	entries, _ := value.([]any)
+	kept := make([]any, 0, len(entries))
+	for _, entry := range entries {
+		group, ok := entry.(map[string]any)
+		if !ok {
+			kept = append(kept, entry)
+			continue
+		}
+		hooks, _ := group["hooks"].([]any)
+		filtered := make([]any, 0, len(hooks))
+		for _, hook := range hooks {
+			item, ok := hook.(map[string]any)
+			if command, _ := item["command"].(string); ok && strings.Contains(command, "mcp hook gemini-prompt") {
+				continue
+			}
+			filtered = append(filtered, hook)
+		}
+		if len(filtered) > 0 {
+			group["hooks"] = filtered
+			kept = append(kept, group)
+		}
+	}
+	return kept
+}
+
 func unpatchGeminiMCPJSON(path string) error {
 	data, err := os.ReadFile(path)
 	if err != nil {
@@ -629,6 +694,16 @@ func unpatchGeminiMCPJSON(path string) error {
 		delete(servers, mcpServerName)
 		if len(servers) == 0 {
 			delete(raw, "mcpServers")
+		}
+	}
+	if hooks, ok := raw["hooks"].(map[string]any); ok {
+		if kept := filterGeminiRoutingHook(hooks["BeforeAgent"]); len(kept) > 0 {
+			hooks["BeforeAgent"] = kept
+		} else {
+			delete(hooks, "BeforeAgent")
+		}
+		if len(hooks) == 0 {
+			delete(raw, "hooks")
 		}
 	}
 	out, err := json.MarshalIndent(raw, "", "  ")

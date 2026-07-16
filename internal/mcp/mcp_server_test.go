@@ -60,6 +60,9 @@ func TestHandleMCPRequestListsTools(t *testing.T) {
 	if !strings.Contains(tools[4].Description, "Full topic/test/search context is opt-in") {
 		t.Fatalf("expected repoguide_get_repo_experience description to keep full context opt-in, got %q", tools[4].Description)
 	}
+	if !strings.Contains(tools[5].Description, "user explicitly requests") || !strings.Contains(tools[5].Description, "Never retry") {
+		t.Fatalf("expected feedback tool to describe explicit consent and denial handling, got %q", tools[5].Description)
+	}
 	if required, ok := tools[0].InputSchema["required"]; ok && len(required.([]string)) > 0 {
 		t.Fatalf("expected repoguide_list_topics to allow empty arguments, got required=%v", required)
 	}

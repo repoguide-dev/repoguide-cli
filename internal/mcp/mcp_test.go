@@ -1,6 +1,8 @@
 package mcp
 
 import (
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 )
@@ -53,6 +55,8 @@ func TestUnderstandTaskResponseExplainsStandaloneWorkflow(t *testing.T) {
 func TestAgentFeedbackInstructionRequestsTopicFilesAndCandidateRule(t *testing.T) {
 	instr := AgentFeedbackInstructionFor("test-repo-id")
 	for _, want := range []string{
+		"user explicitly asks for it",
+		"Do not retry or work around a policy denial",
 		"stable advice IDs",
 		"incorrect, unnecessary, or missing",
 		"useful or misleading files",
@@ -63,5 +67,24 @@ func TestAgentFeedbackInstructionRequestsTopicFilesAndCandidateRule(t *testing.T
 		if !strings.Contains(instr, want) {
 			t.Fatalf("expected feedback instruction to contain %q", want)
 		}
+	}
+}
+
+func TestInstructRepoRemovesLegacyMandatoryFeedbackInstruction(t *testing.T) {
+	repo := initTestRepo(t, t.TempDir(), "repo_one")
+	path := filepath.Join(repo, "AGENTS.md")
+	legacy := "# Project\n\n" + AgentFeedbackInstructionFor("repo_one")
+	if err := os.WriteFile(path, []byte(legacy), 0o644); err != nil {
+		t.Fatalf("WriteFile: %v", err)
+	}
+	if _, err := InstructRepo(repo); err != nil {
+		t.Fatalf("InstructRepo: %v", err)
+	}
+	updated, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("ReadFile: %v", err)
+	}
+	if strings.Contains(string(updated), "repoguide:feedback-instruction") {
+		t.Fatalf("legacy feedback instruction was not removed: %s", updated)
 	}
 }

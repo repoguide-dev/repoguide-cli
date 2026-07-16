@@ -7,7 +7,6 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
-	"time"
 )
 
 func setupHookTestRepo(t *testing.T) string {
@@ -62,118 +61,25 @@ func TestRunPromptHookNoopOutsideActivatedRepo(t *testing.T) {
 	}
 }
 
-func TestRunStopHookBlocksOnceAfterToolUse(t *testing.T) {
+func TestRunGeminiPromptHookReturnsStructuredContext(t *testing.T) {
 	repo := setupHookTestRepo(t)
-
-	promptPayload := `{"session_id":"sess-1","prompt":"fix the login bug","cwd":"` + repo + `"}`
-	var discard bytes.Buffer
-	if err := RunPromptHook(strings.NewReader(promptPayload), &discard, repo); err != nil {
-		t.Fatalf("RunPromptHook: %v", err)
-	}
-	markHookState("repo_one", "tool-used")
-
-	stopPayload := `{"session_id":"sess-1","cwd":"` + repo + `"}`
+	payload := `{"session_id":"sess-1","prompt":"fix the login bug","cwd":"` + repo + `"}`
 	var out bytes.Buffer
-	if err := RunStopHook(strings.NewReader(stopPayload), &out, repo); err != nil {
-		t.Fatalf("RunStopHook: %v", err)
+	if err := RunGeminiPromptHook(strings.NewReader(payload), &out, repo); err != nil {
+		t.Fatalf("RunGeminiPromptHook: %v", err)
 	}
-	var decision map[string]any
-	if err := json.Unmarshal(out.Bytes(), &decision); err != nil {
-		t.Fatalf("expected JSON block decision, got %q: %v", out.String(), err)
+	var result map[string]any
+	if err := json.Unmarshal(out.Bytes(), &result); err != nil {
+		t.Fatalf("expected structured Gemini hook output, got %q: %v", out.String(), err)
 	}
-	if decision["decision"] != "block" {
-		t.Fatalf("expected decision=block, got %v", decision["decision"])
-	}
-	reason := decision["reason"].(string)
-	if !strings.Contains(reason, "repoguide_record_feedback") {
-		t.Fatalf("expected reason to mention repoguide_record_feedback, got %v", decision["reason"])
-	}
-	if strings.Contains(reason, "repoguide:feedback-instruction") {
-		t.Fatalf("expected stop-hook reason to omit HTML wrapper markers, got %v", decision["reason"])
-	}
-	if strings.Contains(reason, "## RepoGuide feedback") {
-		t.Fatalf("expected stop-hook reason to omit the full feedback markdown block, got %v", decision["reason"])
-	}
-
-	// second Stop in the same session must not block again
-	out.Reset()
-	if err := RunStopHook(strings.NewReader(stopPayload), &out, repo); err != nil {
-		t.Fatalf("RunStopHook (second call): %v", err)
-	}
-	if out.String() != "" {
-		t.Fatalf("expected no output on repeat Stop, got %q", out.String())
+	specific, _ := result["hookSpecificOutput"].(map[string]any)
+	context, _ := specific["additionalContext"].(string)
+	if !strings.Contains(context, "repoguide_get_repo_experience") {
+		t.Fatalf("missing routing context: %#v", result)
 	}
 }
 
-func TestRunStopHookRespectsStopHookActive(t *testing.T) {
-	repo := setupHookTestRepo(t)
-
-	promptPayload := `{"session_id":"sess-1","prompt":"fix the login bug","cwd":"` + repo + `"}`
-	var discard bytes.Buffer
-	if err := RunPromptHook(strings.NewReader(promptPayload), &discard, repo); err != nil {
-		t.Fatalf("RunPromptHook: %v", err)
-	}
-	markHookState("repo_one", "tool-used")
-
-	stopPayload := `{"session_id":"sess-1","cwd":"` + repo + `","stop_hook_active":true}`
-	var out bytes.Buffer
-	if err := RunStopHook(strings.NewReader(stopPayload), &out, repo); err != nil {
-		t.Fatalf("RunStopHook: %v", err)
-	}
-	if out.String() != "" {
-		t.Fatalf("expected no output when stop_hook_active is true, got %q", out.String())
-	}
-}
-
-func TestRunStopHookRequestsFeedbackWhenToolNeverCalled(t *testing.T) {
-	repo := setupHookTestRepo(t)
-
-	promptPayload := `{"session_id":"sess-1","prompt":"fix the login bug","cwd":"` + repo + `"}`
-	var discard bytes.Buffer
-	if err := RunPromptHook(strings.NewReader(promptPayload), &discard, repo); err != nil {
-		t.Fatalf("RunPromptHook: %v", err)
-	}
-
-	// No RepoGuide tool was called, but the completed repository session can
-	// still contribute file feedback and a candidate rule.
-	stopPayload := `{"session_id":"sess-1","cwd":"` + repo + `"}`
-	var out bytes.Buffer
-	if err := RunStopHook(strings.NewReader(stopPayload), &out, repo); err != nil {
-		t.Fatalf("RunStopHook: %v", err)
-	}
-	if !strings.Contains(out.String(), "repoguide_record_feedback") {
-		t.Fatalf("expected feedback request even when no RepoGuide tool was called, got %q", out.String())
-	}
-}
-
-func TestRunStopHookIgnoresStaleToolMarkerAndRequestsFeedback(t *testing.T) {
-	repo := setupHookTestRepo(t)
-
-	// tool-used marker left over from an earlier session in the same repo
-	markHookState("repo_one", "tool-used")
-	stale := hookStateFile("repo_one", "tool-used")
-	old := time.Now().Add(-time.Hour)
-	if err := os.Chtimes(stale, old, old); err != nil {
-		t.Fatalf("Chtimes: %v", err)
-	}
-
-	promptPayload := `{"session_id":"sess-1","prompt":"fix the login bug","cwd":"` + repo + `"}`
-	var discard bytes.Buffer
-	if err := RunPromptHook(strings.NewReader(promptPayload), &discard, repo); err != nil {
-		t.Fatalf("RunPromptHook: %v", err)
-	}
-
-	stopPayload := `{"session_id":"sess-1","cwd":"` + repo + `"}`
-	var out bytes.Buffer
-	if err := RunStopHook(strings.NewReader(stopPayload), &out, repo); err != nil {
-		t.Fatalf("RunStopHook: %v", err)
-	}
-	if !strings.Contains(out.String(), "repoguide_record_feedback") {
-		t.Fatalf("expected feedback request independent of stale tool marker, got %q", out.String())
-	}
-}
-
-func TestRunStopHookNoopWithoutPriorPrompt(t *testing.T) {
+func TestRunStopHookNeverBlocksForFeedback(t *testing.T) {
 	repo := setupHookTestRepo(t)
 
 	stopPayload := `{"session_id":"sess-1","cwd":"` + repo + `"}`
@@ -182,7 +88,7 @@ func TestRunStopHookNoopWithoutPriorPrompt(t *testing.T) {
 		t.Fatalf("RunStopHook: %v", err)
 	}
 	if out.String() != "" {
-		t.Fatalf("expected no feedback request when RepoGuide was never invoked, got %q", out.String())
+		t.Fatalf("expected no output from an opt-in feedback stop hook, got %q", out.String())
 	}
 }
 
@@ -197,11 +103,11 @@ func TestInstallAndRemoveClaudeCodeHooksRoundTrip(t *testing.T) {
 	if err != nil {
 		t.Fatalf("ReadFile(settings.local.json): %v", err)
 	}
-	if !strings.Contains(string(data), "mcp hook prompt") || !strings.Contains(string(data), "mcp hook stop") {
-		t.Fatalf("expected both hooks wired, got %s", data)
+	if !strings.Contains(string(data), "mcp hook prompt") || strings.Contains(string(data), "mcp hook stop") {
+		t.Fatalf("expected only the routing hook wired, got %s", data)
 	}
-	if !strings.Contains(string(data), "RepoGuide task routing") || !strings.Contains(string(data), "RepoGuide feedback reminder") {
-		t.Fatalf("expected named hooks, got %s", data)
+	if !strings.Contains(string(data), "RepoGuide task routing") || strings.Contains(string(data), "RepoGuide feedback reminder") {
+		t.Fatalf("expected no feedback reminder hook, got %s", data)
 	}
 
 	// simulate a user's own unrelated hook already present, on the same events

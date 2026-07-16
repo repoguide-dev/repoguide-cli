@@ -156,8 +156,8 @@ var mcpActivityCmd = &cobra.Command{
 // InstructRepoForClaude (see cli/internal/mcp_hooks.go). Not meant to be run
 // by hand; Claude Code invokes it with the hook payload on stdin.
 var mcpHookCmd = &cobra.Command{
-	Use:    "hook [prompt|stop]",
-	Short:  "Internal: run a Claude Code hook (invoked by Claude Code, not users)",
+	Use:    "hook [prompt|gemini-prompt|stop]",
+	Short:  "Internal: run a RepoGuide client hook (invoked by an agent client, not users)",
 	Hidden: true,
 	Args:   cobra.ExactArgs(1),
 	RunE: func(_ *cobra.Command, args []string) error {
@@ -168,6 +168,8 @@ var mcpHookCmd = &cobra.Command{
 		switch args[0] {
 		case "prompt":
 			return mcpinternal.RunPromptHook(os.Stdin, os.Stdout, cwd)
+		case "gemini-prompt":
+			return mcpinternal.RunGeminiPromptHook(os.Stdin, os.Stdout, cwd)
 		case "stop":
 			return mcpinternal.RunStopHook(os.Stdin, os.Stdout, cwd)
 		default:
@@ -195,13 +197,14 @@ func runMCPFix(_ *cobra.Command, _ []string) error {
 		return fmt.Errorf("no configured MCP clients found; run: repoguide mcp install")
 	}
 
-	// Re-activate the current repo (re-installs hooks + instructions).
+	// Re-activate the current repo and refresh native client hooks. RepoGuide
+	// does not add AGENTS.md instructions during MCP installation.
 	if repoRoot, err := internal.CurrentRepoRoot(); err == nil {
 		if err := mcpinternal.ActivateMCPRepo(repoRoot); err != nil {
 			fmt.Printf("  ✗ %s: %v\n", filepath.Base(repoRoot), err)
 		} else {
 			_, _ = mcpinternal.InstructRepoForClaude(repoRoot)
-			fmt.Printf("  ✓ %s hooks applied\n", filepath.Base(repoRoot))
+			fmt.Printf("  ✓ %s hooks refreshed\n", filepath.Base(repoRoot))
 		}
 	}
 
