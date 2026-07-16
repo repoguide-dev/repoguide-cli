@@ -267,6 +267,30 @@ func TestCandidateSourcesUsesOnlySessions(t *testing.T) {
 	}
 }
 
+func TestNormalizeCandidateGroupsPreservesDiscoveryBoundariesDespiteSharedFiles(t *testing.T) {
+	sources := map[string]contracts.RepoAnalysisSource{
+		"s1": {ID: "s1", SourceType: "session", ChangedFiles: []string{"backend/shared.go", "backend/shared_test.go"}},
+		"s2": {ID: "s2", SourceType: "session", ChangedFiles: []string{"backend/shared.go", "backend/shared_test.go"}},
+		"s3": {ID: "s3", SourceType: "session", ChangedFiles: []string{"backend/shared.go", "backend/shared_test.go"}},
+		"s4": {ID: "s4", SourceType: "session", ChangedFiles: []string{"backend/shared.go", "backend/shared_test.go"}},
+	}
+
+	groups := normalizeCandidateGroups(candidateDiscoveryResponse{Candidates: []candidateGroup{
+		{CandidateID: "first", SourceIDs: []string{"s1", "s2"}},
+		{CandidateID: "second", SourceIDs: []string{"s3", "s4"}},
+	}}, sources)
+
+	if len(groups) != 2 {
+		t.Fatalf("group count = %d, want 2", len(groups))
+	}
+	if got := strings.Join(groups[0].SourceIDs, ","); got != "s1,s2" {
+		t.Errorf("first group sources = %q, want s1,s2", got)
+	}
+	if got := strings.Join(groups[1].SourceIDs, ","); got != "s3,s4" {
+		t.Errorf("second group sources = %q, want s3,s4", got)
+	}
+}
+
 func TestBuildCandidateFromSourcesScoresStructuralSupport(t *testing.T) {
 	sources := map[string]contracts.RepoAnalysisSource{}
 	for i, id := range []string{"s1", "s2", "s3", "s4"} {

@@ -462,7 +462,8 @@ func normalizeCandidateGroups(response candidateDiscoveryResponse, sources map[s
 			groups[best].SourceIDs = append(groups[best].SourceIDs, id)
 		}
 	}
-	groups = mergeOverlappingCandidateGroups(groups, sources)
+	// Preserve the discovery model's candidate boundaries. Overlapping changed
+	// files alone do not establish that two candidate groups describe one topic.
 	seenCandidateIDs := map[string]int{}
 	for i := range groups {
 		base := toID(groups[i].CandidateID, i)
@@ -489,51 +490,6 @@ func mergeExistingCandidateGroups(groups []candidateGroup) []candidateGroup {
 		}
 		indexes[group.ExistingTopicID] = len(out)
 		out = append(out, group)
-	}
-	return out
-}
-
-func mergeOverlappingCandidateGroups(groups []candidateGroup, sources map[string]contracts.RepoAnalysisSource) []candidateGroup {
-	for i := 0; i < len(groups); i++ {
-		left := candidateChangedFileSet(groups[i], sources)
-		for j := i + 1; j < len(groups); {
-			right := candidateChangedFileSet(groups[j], sources)
-			intersection := 0
-			for path := range left {
-				if _, ok := right[path]; ok {
-					intersection++
-				}
-			}
-			union := len(left) + len(right) - intersection
-			minSize := min(len(left), len(right))
-			jaccard := 0.0
-			containment := 0.0
-			if union > 0 {
-				jaccard = float64(intersection) / float64(union)
-			}
-			if minSize > 0 {
-				containment = float64(intersection) / float64(minSize)
-			}
-			if intersection >= 2 && (jaccard >= 0.35 || containment >= 0.5) {
-				groups[i].SourceIDs = dedupeStrings(append(groups[i].SourceIDs, groups[j].SourceIDs...))
-				groups = append(groups[:j], groups[j+1:]...)
-				left = candidateChangedFileSet(groups[i], sources)
-				continue
-			}
-			j++
-		}
-	}
-	return groups
-}
-
-func candidateChangedFileSet(group candidateGroup, sources map[string]contracts.RepoAnalysisSource) map[string]struct{} {
-	out := map[string]struct{}{}
-	for _, id := range group.SourceIDs {
-		for _, path := range sources[id].ChangedFiles {
-			if strings.TrimSpace(path) != "" {
-				out[path] = struct{}{}
-			}
-		}
 	}
 	return out
 }
