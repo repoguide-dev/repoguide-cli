@@ -7,6 +7,8 @@ import (
 	"os/exec"
 	"path/filepath"
 	"sort"
+	"syscall"
+	"time"
 )
 
 type LocalSetupStatus struct {
@@ -295,11 +297,29 @@ func RemoveAllTrackedData() (RemoveAllResult, error) {
 		result.RemovedRepos = append(result.RemovedRepos, repo)
 	}
 
-	if err := os.RemoveAll(result.RepoGuideDir); err != nil {
+	if err := removeAllWithRetry(result.RepoGuideDir); err != nil {
 		return RemoveAllResult{}, err
 	}
 
 	return result, nil
+}
+
+// removeAllWithRetry handles a concurrent MCP or hook process creating a
+// directory between RemoveAll's traversal and its final unlink operation.
+func removeAllWithRetry(path string) error {
+	var err error
+	for attempt := 0; attempt < 3; attempt++ {
+		err = os.RemoveAll(path)
+		if err == nil || !isDirectoryNotEmpty(err) {
+			return err
+		}
+		time.Sleep(time.Duration(attempt+1) * 25 * time.Millisecond)
+	}
+	return err
+}
+
+func isDirectoryNotEmpty(err error) bool {
+	return errors.Is(err, syscall.ENOTEMPTY)
 }
 
 func unsetRepoConfig(repoRoot string) error {

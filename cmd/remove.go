@@ -145,6 +145,10 @@ func runRemoveAll(cmd *cobra.Command, _ []string) error {
 		}
 	}
 
+	// Unregister clients before deleting the store so they cannot start another
+	// MCP process that recreates local state during the purge.
+	mcpResults := mcpinternal.UninstallMCPClients()
+
 	result, err := repopkg.RemoveAllTrackedData()
 	if err != nil {
 		return err
@@ -164,7 +168,7 @@ func runRemoveAll(cmd *cobra.Command, _ []string) error {
 		}
 	}
 
-	for _, r := range mcpinternal.UninstallMCPClients() {
+	for _, r := range mcpResults {
 		if r.Err != nil {
 			fmt.Printf("  ✗ %s: %s\n", r.Name, r.Err)
 		} else {

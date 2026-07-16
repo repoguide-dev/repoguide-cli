@@ -514,7 +514,7 @@ func (c CloudClient) UploadRepoEvents(repoID, repoRoot string) error {
 		}
 		resp.Body.Close()
 		if c.Progress != nil {
-			c.Progress(i+1, len(uploads), fmt.Sprintf("Batch %d uploaded", i+1))
+			c.Progress(i+1, len(uploads), "")
 		}
 	}
 

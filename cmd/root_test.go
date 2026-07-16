@@ -11,11 +11,31 @@ import (
 	"time"
 
 	clientauth "github.com/repoguide/repoguide-cli/internal/auth"
+	"github.com/spf13/cobra"
 )
 
 func TestCompiledDefaultBackendURL(t *testing.T) {
 	if defaultBackendURL != "https://repoguide.dev" {
 		t.Fatalf("defaultBackendURL = %q, want %q", defaultBackendURL, "https://repoguide.dev")
+	}
+}
+
+func TestSkipBackgroundTasks(t *testing.T) {
+	tests := []struct {
+		name string
+		want bool
+	}{
+		{name: "purge", want: true},
+		{name: "doctor", want: false},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			cmd := &cobra.Command{Use: tt.name}
+			if got := skipBackgroundTasks(cmd); got != tt.want {
+				t.Fatalf("skipBackgroundTasks(%q) = %v, want %v", tt.name, got, tt.want)
+			}
+		})
 	}
 }
 

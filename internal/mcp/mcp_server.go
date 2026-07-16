@@ -622,7 +622,7 @@ func candidateRuleInputSchema() map[string]any {
 			"applies_when":     map[string]any{"type": "string"},
 			"evidence":         map[string]any{"type": "string"},
 			"exceptions":       map[string]any{"type": "string"},
-			"confidence":       map[string]any{"type": "integer", "minimum": 1, "maximum": 5},
+			"confidence":       map[string]any{"type": "number", "minimum": 0, "maximum": 1},
 			"expected_benefit": map[string]any{"type": "string"},
 			"anchor_files":     map[string]any{"type": "array", "items": map[string]any{"type": "string"}},
 			"scope": map[string]any{

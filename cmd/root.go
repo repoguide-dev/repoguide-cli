@@ -65,11 +65,20 @@ func init() {
 	}
 	root.PersistentFlags().String("backend-url", defaultURL, "RepoGuide backend URL")
 	_ = root.PersistentFlags().MarkHidden("backend-url")
-	root.PersistentPreRun = func(_ *cobra.Command, _ []string) {
+	root.PersistentPreRun = func(cmd *cobra.Command, _ []string) {
+		if skipBackgroundTasks(cmd) {
+			return
+		}
 		setupFileLogging()
 		go refreshCachedAuthProfile()
 		go backgroundSync()
 	}
+}
+
+// skipBackgroundTasks prevents commands that delete the local store from
+// concurrently recreating it through auth refresh or repository sync.
+func skipBackgroundTasks(cmd *cobra.Command) bool {
+	return cmd.Name() == "purge"
 }
 
 // semverLess returns true if version a is less than version b (e.g. "1.2.3" < "1.3.0").

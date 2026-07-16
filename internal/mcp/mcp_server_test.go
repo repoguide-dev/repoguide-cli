@@ -74,6 +74,36 @@ func TestHandleMCPRequestListsTools(t *testing.T) {
 	if _, ok := properties["candidate_rule"]; !ok {
 		t.Fatal("feedback schema must expose candidate_rule")
 	}
+	candidateRule := properties["candidate_rule"].(map[string]any)
+	candidateProperties := candidateRule["properties"].(map[string]any)
+	confidence := candidateProperties["confidence"].(map[string]any)
+	if got := confidence["type"]; got != "number" {
+		t.Fatalf("candidate rule confidence type = %v, want number", got)
+	}
+}
+
+func TestDecodeRecordFeedbackAcceptsFractionalCandidateConfidence(t *testing.T) {
+	var input repoguideRecordFeedbackInput
+	err := decodeToolArguments(map[string]any{
+		"repo_id": "repo",
+		"stars":   5,
+		"candidate_rule": map[string]any{
+			"rule":             "Run the focused test first.",
+			"applies_when":     "Changing the parser.",
+			"evidence":         "The focused test caught the regression.",
+			"exceptions":       "None.",
+			"confidence":       0.98,
+			"expected_benefit": "Faster feedback.",
+			"anchor_files":     []string{"parser_test.go"},
+			"scope":            map[string]any{},
+		},
+	}, &input)
+	if err != nil {
+		t.Fatalf("decode fractional candidate confidence: %v", err)
+	}
+	if input.CandidateRule == nil || input.CandidateRule.Confidence != 0.98 {
+		t.Fatalf("candidate rule confidence = %#v, want 0.98", input.CandidateRule)
+	}
 }
 
 func TestCallMCPToolListTopicsReturnsEmptyWithoutBackend(t *testing.T) {

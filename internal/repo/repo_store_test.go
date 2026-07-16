@@ -5,8 +5,26 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"syscall"
 	"testing"
 )
+
+func TestRemoveAllWithRetryRemovesPath(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "file")
+	if err := os.WriteFile(path, []byte("data"), 0o644); err != nil {
+		t.Fatalf("WriteFile: %v", err)
+	}
+	if err := removeAllWithRetry(path); err != nil {
+		t.Fatalf("removeAllWithRetry: %v", err)
+	}
+	if _, err := os.Stat(path); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("expected %s to be removed, stat err = %v", path, err)
+	}
+
+	if !isDirectoryNotEmpty(&os.PathError{Err: syscall.ENOTEMPTY}) {
+		t.Fatal("expected ENOTEMPTY path error to be recognized as retryable")
+	}
+}
 
 func TestRemoveAllTrackedDataRemovesStoreAndRepoConfig(t *testing.T) {
 	tempDir := t.TempDir()
