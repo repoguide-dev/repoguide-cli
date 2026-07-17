@@ -140,6 +140,45 @@ func TestInstallAndRemoveClaudeCodeHooksRoundTrip(t *testing.T) {
 	}
 }
 
+func TestInstallClaudeCodeHooksKeepsUserHookAndReplacesOwn(t *testing.T) {
+	repo := setupHookTestRepo(t)
+	settingsPath := filepath.Join(repo, ".claude", "settings.local.json")
+
+	if err := os.MkdirAll(filepath.Dir(settingsPath), 0o755); err != nil {
+		t.Fatalf("MkdirAll: %v", err)
+	}
+	if err := writeJSON(settingsPath, map[string]any{"hooks": map[string]any{
+		"UserPromptSubmit": []any{map[string]any{
+			"hooks": []any{map[string]any{"type": "command", "command": "echo user-hook"}},
+		}},
+	}}); err != nil {
+		t.Fatalf("writeJSON: %v", err)
+	}
+
+	// Two installs from different binaries: the user's hook survives both, and
+	// only the most recent RepoGuide hook remains.
+	if err := InstallClaudeCodeHooks(repo, "/usr/local/bin/repoguide"); err != nil {
+		t.Fatalf("InstallClaudeCodeHooks: %v", err)
+	}
+	if err := InstallClaudeCodeHooks(repo, "/opt/repoguide-local"); err != nil {
+		t.Fatalf("InstallClaudeCodeHooks (reinstall): %v", err)
+	}
+
+	data, err := os.ReadFile(settingsPath)
+	if err != nil {
+		t.Fatalf("ReadFile: %v", err)
+	}
+	if !strings.Contains(string(data), "echo user-hook") {
+		t.Fatalf("expected user's own hook preserved, got %s", data)
+	}
+	if got := strings.Count(string(data), "mcp hook prompt"); got != 1 {
+		t.Fatalf("expected exactly 1 RepoGuide prompt hook, got %d: %s", got, data)
+	}
+	if !strings.Contains(string(data), "/opt/repoguide-local") {
+		t.Fatalf("expected hook to point at the newest binary, got %s", data)
+	}
+}
+
 func TestRemoveClaudeCodeHooksDeletesFileWhenOnlyRepoGuideHooks(t *testing.T) {
 	repo := setupHookTestRepo(t)
 

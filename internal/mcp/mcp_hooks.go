@@ -147,7 +147,12 @@ func InstallClaudeCodeHooks(repoPath, binPath string) error {
 	if hooks == nil {
 		hooks = make(map[string]any)
 	}
-	hooks["UserPromptSubmit"] = []any{claudeHookCommand(binPath, "prompt")}
+	// Drop any prior RepoGuide prompt hook (this binary's or another install's)
+	// but keep hooks the user configured on the same event.
+	hooks["UserPromptSubmit"] = append(
+		filterOutHookMarker(hooks["UserPromptSubmit"], claudeHookPromptMarker),
+		claudeHookCommand(binPath, "prompt"),
+	)
 	// Remove the legacy mandatory-feedback Stop hook during installation/update.
 	if kept := filterOutHookMarker(hooks["Stop"], claudeHookStopMarker); len(kept) > 0 {
 		hooks["Stop"] = kept
