@@ -403,7 +403,7 @@ func handleMCPRequest(req mcpRequest, client *CloudClient) (mcpResponse, bool) {
 			_ = AppendMCPActivity(record)
 		}
 		var textContent string
-		if text, ok := result["text"].(string); ok && len(result) == 1 {
+		if text, ok := result["text"].(string); ok {
 			textContent = text
 		} else {
 			payload, _ := json.MarshalIndent(result, "", "  ")
@@ -550,6 +550,9 @@ func callMCPTool(name string, arguments map[string]any, client *CloudClient) (ma
 		text := strings.TrimSpace(result.Explanation)
 		if result.TopicID != "" && result.ContextText != "" {
 			text += "\n\n" + result.ContextText
+		}
+		if advice := renderSelectedAdvice(result.SelectedAdvice); advice != "" {
+			text += "\n\n" + advice
 		}
 		out := map[string]any{"text": text}
 		if result.TopicID != "" {
