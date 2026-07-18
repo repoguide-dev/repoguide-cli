@@ -662,8 +662,9 @@ func buildRepoEventsZipForSessions(repoID, repoRoot string, sessions []SessionSu
 
 		aliases := buildRepoPathAliases(repoRoot)
 		commits := buildRecentGitCommits(repoRoot, 100)
-		if len(aliases) > 0 || len(commits) > 0 {
-			data, err := json.Marshal(map[string]any{"path_aliases": aliases, "commits": commits})
+		allFiles := buildTrackedFiles(repoRoot)
+		if len(aliases) > 0 || len(commits) > 0 || len(allFiles) > 0 {
+			data, err := json.Marshal(map[string]any{"path_aliases": aliases, "commits": commits, "all_files": allFiles})
 			if err != nil {
 				return nil, 0, err
 			}
@@ -721,6 +722,24 @@ func buildRecentGitCommits(repoRoot string, limit int) []repoGitCommit {
 		commits = append(commits, commit)
 	}
 	return commits
+}
+
+func buildTrackedFiles(repoRoot string) []string {
+	if strings.TrimSpace(repoRoot) == "" {
+		return nil
+	}
+	cmd := exec.Command("git", "-C", repoRoot, "ls-files")
+	out, err := cmd.Output()
+	if err != nil {
+		return nil
+	}
+	var files []string
+	for _, line := range strings.Split(string(out), "\n") {
+		if line = strings.TrimSpace(line); line != "" {
+			files = append(files, filepath.ToSlash(line))
+		}
+	}
+	return files
 }
 
 func buildRepoPathAliases(repoRoot string) map[string]string {

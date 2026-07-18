@@ -6,6 +6,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/repoguide/repoguide-cli/internal/session"
 	"github.com/repoguide/repoguide-core/model"
 )
 
@@ -18,49 +19,39 @@ var shellSearchQueryPattern = regexp.MustCompile(`(?:^|[\s;&|])(?:rg|grep|ag|ack
 // the user's actual ask.
 var xmlTagPattern = regexp.MustCompile(`<[^>]+>`)
 
-var modelPricing = map[string][4]float64{
-	"claude-fable-5":    {10.00, 50.00, 1.00, 12.50},
-	"claude-opus-4-8":   {5.00, 25.00, 0.50, 6.25},
-	"claude-opus-4-7":   {5.00, 25.00, 0.50, 6.25},
-	"claude-sonnet-4-6": {3.00, 15.00, 0.30, 3.75},
-	"claude-sonnet-4-5": {3.00, 15.00, 0.30, 3.75},
-	"claude-haiku-4-5":  {1.00, 5.00, 0.10, 1.25},
-	"gpt-5.4":           {2.50, 15.00, 0.25, 0},
-	"gpt-5.4-mini":      {0.75, 4.50, 0.075, 0},
-	"gemini-2.5-pro":    {1.25, 10.00, 0.125, 0},
-	"gemini-2.5-flash":  {0.30, 2.50, 0.03, 0},
+func toSessionUsage(usage *model.TokenUsage) *session.TokenUsage {
+	if usage == nil {
+		return nil
+	}
+	return &session.TokenUsage{
+		InputTokens:      usage.InputTokens,
+		OutputTokens:     usage.OutputTokens,
+		CacheReadTokens:  usage.CacheReadTokens,
+		CacheWriteTokens: usage.CacheWriteTokens,
+		Cumulative:       usage.Cumulative,
+	}
 }
 
-func estimateCost(model string, usage *model.TokenUsage) float64 {
-	if usage == nil {
-		return 0
-	}
-	p, ok := modelPricing[strings.TrimSpace(model)]
+func estimateCost(modelName string, usage *model.TokenUsage) float64 {
+	pricing, ok := session.LookupModelPricing(modelName)
 	if !ok {
 		return 0
 	}
-	const m = 1_000_000.0
-	return float64(usage.InputTokens)*p[0]/m +
-		float64(usage.OutputTokens)*p[1]/m +
-		float64(usage.CacheReadTokens)*p[2]/m +
-		float64(usage.CacheWriteTokens)*p[3]/m
+	return session.EstimateCostUSD(pricing, toSessionUsage(usage))
 }
 
 // estimateInputCost is the input+cache-token slice of estimateCost (mirrors
 // effectiveCtx's token set) - excludes output tokens, since those aren't
 // affected by reducing how much context an agent loads before editing.
-func estimateInputCost(model string, usage *model.TokenUsage) float64 {
-	if usage == nil {
-		return 0
-	}
-	p, ok := modelPricing[strings.TrimSpace(model)]
-	if !ok {
+func estimateInputCost(modelName string, usage *model.TokenUsage) float64 {
+	pricing, ok := session.LookupModelPricing(modelName)
+	if !ok || usage == nil {
 		return 0
 	}
 	const m = 1_000_000.0
-	return float64(usage.InputTokens)*p[0]/m +
-		float64(usage.CacheReadTokens)*p[2]/m +
-		float64(usage.CacheWriteTokens)*p[3]/m
+	return float64(usage.InputTokens)*pricing.InputPerMTokUSD/m +
+		float64(usage.CacheReadTokens)*pricing.CacheReadPerMTokUSD/m +
+		float64(usage.CacheWriteTokens)*pricing.CacheWritePerMTokUSD/m
 }
 
 func analyzeSessionEvents(events []model.SessionEvent) sessionMetrics {
