@@ -35,6 +35,7 @@ func BuildRepoAnalysis(repoRoot string, stored []model.RepoSessionEvents, teamSy
 		m := analyzeSessionEvents(s.Events)
 		// estimate cost using the agent as a proxy for model name
 		m.EstimatedCostUSD = estimateCost(s.Agent, m.TokenUsage)
+		m.EstimatedInputCostUSD = estimateInputCost(s.Agent, m.TokenUsage)
 		sessions = append(sessions, backendSession{
 			id:        s.ID,
 			agent:     s.Agent,
@@ -138,6 +139,7 @@ func buildBundle(repoRoot string, sessions []backendSession, teamSynced bool) Re
 		summary.ContextTokens += effCtx
 		summary.TotalTokens += totalTok(m.TokenUsage)
 		summary.CostUSD += m.EstimatedCostUSD
+		summary.InputCostUSD += m.EstimatedInputCostUSD
 
 		perFile := buildFileActivity(repoRoot, m)
 		for _, a := range perFile {

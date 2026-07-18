@@ -215,7 +215,17 @@ type reportView struct {
 	HasWorstSession bool
 	WorstSession    analysis.WorstSessionCase
 	RepoAverages    analysis.RepoStartCost
+
+	// EstimatedSavingsUSD projects what RepoGuide would have saved across every
+	// analyzed session: inputTokenSavingsRate off the input+cache-token slice
+	// of cost (output tokens aren't reduced by loading less context).
+	EstimatedSavingsUSD float64
+	HasSavingsEstimate  bool
 }
+
+// inputTokenSavingsRate is the measured average input-token reduction
+// RepoGuide gives an agent that already has the right context up front.
+const inputTokenSavingsRate = 0.32
 
 // Below this many sessions, "recurring" patterns are as likely to be
 // coincidence as signal, so the report says so instead of presenting them
@@ -231,6 +241,10 @@ func buildReportView(bundle analysis.RepoAnalysisBundle) reportView {
 	v := reportView{RepoAnalysisBundle: bundle}
 	v.SampleSize = bundle.Summary.Sessions
 	v.LowSampleSize = bundle.Summary.Sessions < minSessionsForReliableReport
+	if bundle.Summary.InputCostUSD > 0 {
+		v.EstimatedSavingsUSD = bundle.Summary.InputCostUSD * inputTokenSavingsRate
+		v.HasSavingsEstimate = true
+	}
 
 	// Only "expensive_edit_target" traces carry real read-before-edit
 	// evidence (a populated AvgReadsBeforeEdit and the files most often read
@@ -520,8 +534,13 @@ pre{background:#0c0b0a;border:1px solid #262420;border-radius:10px;padding:14px;
 {{end}}
 
 <div class="savings">
+{{if .HasSavingsEstimate}}
+<h2>Estimated savings: {{printf "$%.2f" .EstimatedSavingsUSD}}</h2>
+<p class="why">Based on the {{.SampleSize}} session{{if ne .SampleSize 1}}s{{end}} analyzed above, RepoGuide's context reduction cuts input-token cost by roughly <b>32%</b> — the rest of each session's cost (output tokens) is unaffected.</p>
+{{else}}
 <h2>Stop making every agent rediscover your repo</h2>
 <p class="why">RepoGuide turns earlier sessions into <b>task-specific starting files, repository constraints, and validation steps</b> — before the next agent starts searching.</p>
+{{end}}
 <div class="actions">
 <a class="primary-cta" href="{{.UseRepoGuideURL}}" target="_blank" rel="noopener">Use RepoGuide on your next task →</a>
 <button class="secondary compact" onclick="openShareModal()">Share</button>

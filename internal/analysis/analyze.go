@@ -46,6 +46,23 @@ func estimateCost(model string, usage *model.TokenUsage) float64 {
 		float64(usage.CacheWriteTokens)*p[3]/m
 }
 
+// estimateInputCost is the input+cache-token slice of estimateCost (mirrors
+// effectiveCtx's token set) - excludes output tokens, since those aren't
+// affected by reducing how much context an agent loads before editing.
+func estimateInputCost(model string, usage *model.TokenUsage) float64 {
+	if usage == nil {
+		return 0
+	}
+	p, ok := modelPricing[strings.TrimSpace(model)]
+	if !ok {
+		return 0
+	}
+	const m = 1_000_000.0
+	return float64(usage.InputTokens)*p[0]/m +
+		float64(usage.CacheReadTokens)*p[2]/m +
+		float64(usage.CacheWriteTokens)*p[3]/m
+}
+
 func analyzeSessionEvents(events []model.SessionEvent) sessionMetrics {
 	readCounts := map[string]int{}
 	writeCounts := map[string]int{}

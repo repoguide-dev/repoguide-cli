@@ -26,6 +26,9 @@ type sessionMetrics struct {
 	Commands         []commandStat
 	TokenUsage       *model.TokenUsage
 	EstimatedCostUSD float64
+	// EstimatedInputCostUSD is the input+cache-token slice of EstimatedCostUSD
+	// (excludes output tokens) - the part RepoGuide's context reduction can save.
+	EstimatedInputCostUSD float64
 }
 
 // commandStat is a deduplicated shell command observed in a session.
