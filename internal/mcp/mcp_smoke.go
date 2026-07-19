@@ -375,9 +375,9 @@ func extractStructuredContent(result any) (map[string]any, string, error) {
 		}
 		return nil, "tool call failed", nil
 	}
-	structured, ok := payload["structuredContent"].(map[string]any)
+	structured, ok := payload["_meta"].(map[string]any)
 	if !ok {
-		return nil, "", fmt.Errorf("structuredContent type = %T", payload["structuredContent"])
+		return nil, "", fmt.Errorf("_meta type = %T", payload["_meta"])
 	}
 	return structured, "", nil
 }

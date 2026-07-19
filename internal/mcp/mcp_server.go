@@ -409,9 +409,12 @@ func handleMCPRequest(req mcpRequest, client *CloudClient) (mcpResponse, bool) {
 			payload, _ := json.MarshalIndent(result, "", "  ")
 			textContent = string(payload)
 		}
+		// ponytail: structured fields ride in _meta, not structuredContent —
+		// clients that surface structuredContent verbatim were dumping raw
+		// JSON to the agent instead of the rendered text in "content".
 		resp.Result = map[string]any{
-			"content":           []map[string]any{{"type": "text", "text": textContent}},
-			"structuredContent": result,
+			"content": []map[string]any{{"type": "text", "text": textContent}},
+			"_meta":   result,
 		}
 		return resp, true
 	default:
