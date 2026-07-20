@@ -389,6 +389,14 @@ func codexPluginHooksConfig(binPath string) map[string]any {
 					"timeout": 5,
 				}},
 			}},
+			"Stop": []map[string]any{{
+				"hooks": []map[string]any{{
+					"name":    "RepoGuide feedback reminder",
+					"type":    "command",
+					"command": "\"" + binPath + "\" mcp hook stop",
+					"timeout": 5,
+				}},
+			}},
 		},
 	}
 }
@@ -641,6 +649,16 @@ func patchGeminiRoutingHook(path, binPath string) error {
 		}},
 	})
 	hooks["BeforeAgent"] = entries
+	afterEntries := filterGeminiHookMarker(hooks["AfterAgent"], "mcp hook gemini-stop")
+	afterEntries = append(afterEntries, map[string]any{
+		"hooks": []any{map[string]any{
+			"type":    "command",
+			"name":    "RepoGuide feedback reminder",
+			"command": "\"" + binPath + "\" mcp hook gemini-stop",
+			"timeout": 5000,
+		}},
+	})
+	hooks["AfterAgent"] = afterEntries
 	raw["hooks"] = hooks
 	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
 		return err
@@ -653,6 +671,10 @@ func patchGeminiRoutingHook(path, binPath string) error {
 }
 
 func filterGeminiRoutingHook(value any) []any {
+	return filterGeminiHookMarker(value, "mcp hook gemini-prompt")
+}
+
+func filterGeminiHookMarker(value any, marker string) []any {
 	entries, _ := value.([]any)
 	kept := make([]any, 0, len(entries))
 	for _, entry := range entries {
@@ -665,7 +687,7 @@ func filterGeminiRoutingHook(value any) []any {
 		filtered := make([]any, 0, len(hooks))
 		for _, hook := range hooks {
 			item, ok := hook.(map[string]any)
-			if command, _ := item["command"].(string); ok && strings.Contains(command, "mcp hook gemini-prompt") {
+			if command, _ := item["command"].(string); ok && strings.Contains(command, marker) {
 				continue
 			}
 			filtered = append(filtered, hook)
@@ -701,6 +723,11 @@ func unpatchGeminiMCPJSON(path string) error {
 			hooks["BeforeAgent"] = kept
 		} else {
 			delete(hooks, "BeforeAgent")
+		}
+		if kept := filterGeminiHookMarker(hooks["AfterAgent"], "mcp hook gemini-stop"); len(kept) > 0 {
+			hooks["AfterAgent"] = kept
+		} else {
+			delete(hooks, "AfterAgent")
 		}
 		if len(hooks) == 0 {
 			delete(raw, "hooks")

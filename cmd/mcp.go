@@ -156,7 +156,7 @@ var mcpActivityCmd = &cobra.Command{
 // InstructRepoForClaude (see cli/internal/mcp_hooks.go). Not meant to be run
 // by hand; Claude Code invokes it with the hook payload on stdin.
 var mcpHookCmd = &cobra.Command{
-	Use:    "hook [prompt|gemini-prompt|stop]",
+	Use:    "hook [prompt|gemini-prompt|stop|gemini-stop]",
 	Short:  "Internal: run a RepoGuide client hook (invoked by an agent client, not users)",
 	Hidden: true,
 	Args:   cobra.ExactArgs(1),
@@ -172,6 +172,8 @@ var mcpHookCmd = &cobra.Command{
 			return mcpinternal.RunGeminiPromptHook(os.Stdin, os.Stdout, cwd)
 		case "stop":
 			return mcpinternal.RunStopHook(os.Stdin, os.Stdout, cwd)
+		case "gemini-stop":
+			return mcpinternal.RunGeminiStopHook(os.Stdin, os.Stdout, cwd)
 		default:
 			return fmt.Errorf("unknown hook %q", args[0])
 		}

@@ -10,9 +10,11 @@ import (
 
 // Claude Code hooks that replace the static CLAUDE.md instruction blocks with
 // dynamic prompt injection: repoguide_get_repo_experience is suggested as soon
-// as the user states a task (UserPromptSubmit). Feedback is deliberately not
-// requested automatically because it can transmit private task and repository
-// metadata.
+// as the user states a task (UserPromptSubmit), and repoguide_record_feedback
+// is nudged once, non-blockingly, at the end of a session that actually used
+// RepoGuide (Stop). The nudge only ever asks the agent to ask the user first —
+// feedback transmits private task and repository metadata, so it stays
+// opt-in even when reminded.
 
 type hookPromptPayload struct {
 	SessionID string `json:"session_id"`
@@ -102,9 +104,88 @@ func RunGeminiPromptHook(stdin io.Reader, stdout io.Writer, cwd string) error {
 	return json.NewEncoder(stdout).Encode(result)
 }
 
-// RunStopHook is retained for backwards-compatible hook commands. Feedback is
-// opt-in, so it must never block an agent from finishing a task.
+// repoToolUsedThisSession reports whether a RepoGuide MCP tool was called in
+// this repo since this session's first prompt. Claude Code and Codex never
+// forward the hook session_id to the MCP server, so tool use is marked per
+// repo and correlated with the session by comparing marker mtimes.
+func repoToolUsedThisSession(repoID, sessionID string) bool {
+	used, err := os.Stat(hookStateFile(repoID, "tool-used"))
+	if err != nil {
+		return false
+	}
+	prompted, err := os.Stat(hookStateFile(sessionID, "prompted"))
+	if err != nil {
+		return false
+	}
+	return !used.ModTime().Before(prompted.ModTime())
+}
+
+// RunStopHook implements the Claude Code and Codex Stop hook: once per
+// session, if a RepoGuide MCP tool was actually called earlier in the
+// session, nudge the agent once to offer feedback before it stops. The
+// stop_hook_active guard means this never fires twice in a row, so it can
+// never hang a session — it is a single reminder, not an enforcement gate.
 func RunStopHook(stdin io.Reader, stdout io.Writer, cwd string) error {
+	var payload hookStopPayload
+	if err := json.NewDecoder(stdin).Decode(&payload); err != nil {
+		return nil
+	}
+	if payload.CWD != "" {
+		cwd = payload.CWD
+	}
+	if payload.StopHookActive || payload.SessionID == "" {
+		return nil
+	}
+	repoID, err := GitRepoID(cwd)
+	if err != nil || repoID == "" {
+		return nil
+	}
+	if !repoToolUsedThisSession(repoID, payload.SessionID) {
+		return nil
+	}
+	if hookStateExists(payload.SessionID, "feedback-asked") {
+		return nil
+	}
+	markHookState(payload.SessionID, "feedback-asked")
+	out, _ := json.Marshal(map[string]any{
+		"decision": "block",
+		"reason":   AgentFeedbackHookReasonFor(repoID),
+	})
+	_, _ = stdout.Write(out)
+	return nil
+}
+
+// RunGeminiStopHook implements Gemini CLI's AfterAgent hook: the same
+// one-time feedback nudge as RunStopHook, using Gemini's decision:"deny"
+// instead of Claude/Codex's decision:"block". stop_hook_active still guards
+// against firing twice in a row.
+func RunGeminiStopHook(stdin io.Reader, stdout io.Writer, cwd string) error {
+	var payload hookStopPayload
+	if err := json.NewDecoder(stdin).Decode(&payload); err != nil {
+		return nil
+	}
+	if payload.CWD != "" {
+		cwd = payload.CWD
+	}
+	if payload.StopHookActive || payload.SessionID == "" {
+		return nil
+	}
+	repoID, err := GitRepoID(cwd)
+	if err != nil || repoID == "" {
+		return nil
+	}
+	if !repoToolUsedThisSession(repoID, payload.SessionID) {
+		return nil
+	}
+	if hookStateExists(payload.SessionID, "feedback-asked") {
+		return nil
+	}
+	markHookState(payload.SessionID, "feedback-asked")
+	out, _ := json.Marshal(map[string]any{
+		"decision": "deny",
+		"reason":   AgentFeedbackHookReasonFor(repoID),
+	})
+	_, _ = stdout.Write(out)
 	return nil
 }
 
@@ -122,6 +203,8 @@ func claudeHookCommand(binPath, event string) map[string]any {
 	switch event {
 	case "prompt":
 		name = "RepoGuide task routing"
+	case "stop":
+		name = "RepoGuide feedback reminder"
 	}
 	return map[string]any{
 		"hooks": []any{
@@ -153,12 +236,12 @@ func InstallClaudeCodeHooks(repoPath, binPath string) error {
 		filterOutHookMarker(hooks["UserPromptSubmit"], claudeHookPromptMarker),
 		claudeHookCommand(binPath, "prompt"),
 	)
-	// Remove the legacy mandatory-feedback Stop hook during installation/update.
-	if kept := filterOutHookMarker(hooks["Stop"], claudeHookStopMarker); len(kept) > 0 {
-		hooks["Stop"] = kept
-	} else {
-		delete(hooks, "Stop")
-	}
+	// Drop any prior RepoGuide Stop hook (this binary's or another install's)
+	// but keep hooks the user configured on the same event.
+	hooks["Stop"] = append(
+		filterOutHookMarker(hooks["Stop"], claudeHookStopMarker),
+		claudeHookCommand(binPath, "stop"),
+	)
 	raw["hooks"] = hooks
 	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
 		return err

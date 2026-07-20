@@ -387,39 +387,15 @@ func AgentFeedbackInstructionFor(repoID string) string {
 		"\n<!-- /repoguide:feedback-instruction -->\n"
 }
 
-// AgentFeedbackHookReasonFor returns the plain-text feedback instruction shown
-// by Claude Code's Stop hook.
+// AgentFeedbackHookReasonFor returns the one-time Stop/AfterAgent hook nudge
+// asking the agent to offer feedback before ending a session that used
+// RepoGuide. It defers to the same user-consent gate as the rest of the
+// feedback instruction — the agent must ask before it may call
+// repoguide_record_feedback.
 func AgentFeedbackHookReasonFor(repoID string) string {
-	return "Optional RepoGuide feedback is available only with the user's explicit approval to send task and repository metadata."
-}
-
-// InjectFeedbackInstruction appends (or replaces) the feedback block in
-// AGENTS.md, for agents other than Claude Code. Claude Code gets the same
-// instruction dynamically from the Stop hook installed by InstructRepoForClaude.
-func InjectFeedbackInstruction(repoPath string) error {
-	repoID, _ := gitOutputAt(repoPath, "config", "--get", "repoguide.repoId")
-	instruction := AgentFeedbackInstructionFor(repoID)
-	agentsPath := filepath.Join(repoPath, "AGENTS.md")
-	existing, _ := os.ReadFile(agentsPath)
-	return os.WriteFile(agentsPath, []byte(injectFeedbackInstruction(string(existing), instruction)), 0644)
-}
-
-func injectFeedbackInstruction(existing, instruction string) string {
-	const openMarker = "<!-- repoguide:feedback-instruction"
-	const closeMarker = "<!-- /repoguide:feedback-instruction -->"
-	if start := strings.Index(existing, openMarker); start >= 0 {
-		if end := strings.Index(existing[start:], closeMarker); end >= 0 {
-			tail := strings.TrimLeft(existing[start+end+len(closeMarker):], "\n")
-			if tail == "" {
-				return existing[:start] + instruction
-			}
-			return existing[:start] + instruction + "\n" + tail
-		}
-	}
-	if existing == "" {
-		return instruction
-	}
-	return existing + "\n" + instruction
+	return "Before finishing, ask the user whether they'd like to send RepoGuide feedback on this session (repo " + repoID + "). " +
+		"Only call repoguide_record_feedback if they agree; otherwise finish normally.\n\n" +
+		agentFeedbackInstructionBody(repoID)
 }
 
 func removeFeedbackInstruction(existing string) string {

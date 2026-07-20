@@ -88,7 +88,7 @@ func TestCodexPluginMCPConfigUsesRepoGuideServer(t *testing.T) {
 	}
 }
 
-func TestCodexPluginHooksConfigInstallsPromptHookOnly(t *testing.T) {
+func TestCodexPluginHooksConfigInstallsPromptAndStopHooks(t *testing.T) {
 	cfg := codexPluginHooksConfig("/tmp/repoguide")
 	hooks, ok := cfg["hooks"].(map[string]any)
 	if !ok {
@@ -112,8 +112,19 @@ func TestCodexPluginHooksConfigInstallsPromptHookOnly(t *testing.T) {
 	if got := entries[0]["timeout"]; got != 5 {
 		t.Fatalf("UserPromptSubmit timeout = %v, want 5", got)
 	}
-	if _, ok := hooks["Stop"]; ok {
-		t.Fatalf("Stop hook should be omitted for Codex, got %#v", hooks["Stop"])
+	stopGroups, ok := hooks["Stop"].([]map[string]any)
+	if !ok || len(stopGroups) != 1 {
+		t.Fatalf("Stop groups = %#v, want one hook group", hooks["Stop"])
+	}
+	stopEntries, ok := stopGroups[0]["hooks"].([]map[string]any)
+	if !ok || len(stopEntries) != 1 {
+		t.Fatalf("Stop hooks = %#v, want one command hook", stopGroups[0]["hooks"])
+	}
+	if got := stopEntries[0]["name"]; got != "RepoGuide feedback reminder" {
+		t.Fatalf("Stop name = %v, want %q", got, "RepoGuide feedback reminder")
+	}
+	if got := stopEntries[0]["command"]; got != "\"/tmp/repoguide\" mcp hook stop" {
+		t.Fatalf("Stop command = %v, want %q", got, "\"/tmp/repoguide\" mcp hook stop")
 	}
 }
 
@@ -220,5 +231,28 @@ func TestPatchGeminiRoutingHookAddsBeforeAgentCommand(t *testing.T) {
 	}
 	if !strings.Contains(string(data), "BeforeAgent") || !strings.Contains(string(data), "gemini-prompt") {
 		t.Fatalf("expected native Gemini routing hook, got %s", data)
+	}
+	if !strings.Contains(string(data), "AfterAgent") || !strings.Contains(string(data), "gemini-stop") {
+		t.Fatalf("expected native Gemini feedback reminder hook, got %s", data)
+	}
+}
+
+func TestUnpatchGeminiMCPJSONRemovesBothHooks(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "settings.json")
+	if err := patchGeminiMCPJSON(path, "/tmp/repoguide"); err != nil {
+		t.Fatalf("patchGeminiMCPJSON: %v", err)
+	}
+	if err := patchGeminiRoutingHook(path, "/tmp/repoguide"); err != nil {
+		t.Fatalf("patchGeminiRoutingHook: %v", err)
+	}
+	if err := unpatchGeminiMCPJSON(path); err != nil {
+		t.Fatalf("unpatchGeminiMCPJSON: %v", err)
+	}
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("ReadFile: %v", err)
+	}
+	if strings.Contains(string(data), "gemini-prompt") || strings.Contains(string(data), "gemini-stop") {
+		t.Fatalf("expected both Gemini hooks removed, got %s", data)
 	}
 }
