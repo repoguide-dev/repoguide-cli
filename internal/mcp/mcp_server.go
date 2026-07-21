@@ -324,8 +324,10 @@ func handleMCPRequest(req mcpRequest, client *CloudClient) (mcpResponse, bool) {
 					InputSchema: optionalObjectSchema("task", "repo_id", "topic_id"),
 				},
 				{
-					Name:        "repoguide_record_feedback",
-					Description: "Optional: submit end-of-task feedback to RepoGuide. This transmits task and repository metadata; invoke it only when the user explicitly requests it or approves that transmission. Never retry or bypass a policy denial.",
+					Name: "repoguide_record_feedback",
+					Description: "Optional: submit end-of-task feedback to RepoGuide. This transmits task and repository metadata; invoke it only when the user explicitly requests it, approves that transmission, or auto-feedback is configured (the Stop hook reason says so). Never retry or bypass a policy denial. " +
+						"advice_evaluation: evaluate the guidance RepoGuide gave this session — helpful_advice_ids/unhelpful_advice_ids are the stable advice IDs that helped or didn't; useful_advice/incorrect_advice/unnecessary_advice/missing_advice explain what was right, wrong, unneeded, or absent; useful_files/unhelpful_files name files the guidance pointed at well or poorly. " +
+						"candidate_rule: propose exactly one reusable repository rule with file anchors that would save time on a similar task next time; it's stored as a candidate and only becomes guidance once corroborated by later sessions or developer feedback. If no advice ID or file applies, use empty lists/strings.",
 					InputSchema: map[string]any{
 						"type": "object",
 						"properties": map[string]any{

@@ -10,6 +10,7 @@ import (
 type Config struct {
 	AnthropicAPIKey string `json:"anthropic_api_key,omitempty"`
 	UseClaudeCLI    bool   `json:"use_claude_cli,omitempty"`
+	AutoFeedback    bool   `json:"auto_feedback,omitempty"`
 }
 
 // dataDirName is overridden in the local development build.
@@ -54,6 +55,19 @@ func AnthropicAPIKey() string {
 func SetAnthropicAPIKey(key string) error {
 	c := load()
 	c.AnthropicAPIKey = key
+	return save(c)
+}
+
+// AutoFeedback reports whether the Stop hook should submit feedback
+// automatically instead of asking the user first. Defaults to false (ask).
+func AutoFeedback() bool {
+	return load().AutoFeedback
+}
+
+// SetAutoFeedback saves the auto-feedback preference to the global config file.
+func SetAutoFeedback(v bool) error {
+	c := load()
+	c.AutoFeedback = v
 	return save(c)
 }
 

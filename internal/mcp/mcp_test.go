@@ -52,28 +52,35 @@ func TestUnderstandTaskResponseExplainsStandaloneWorkflow(t *testing.T) {
 	}
 }
 
-func TestAgentFeedbackInstructionRequestsTopicFilesAndCandidateRule(t *testing.T) {
-	instr := AgentFeedbackInstructionFor("test-repo-id")
+func TestAgentFeedbackInstructionAsksUnlessAutoFeedback(t *testing.T) {
+	instr := AgentFeedbackInstructionFor("test-repo-id", false)
 	for _, want := range []string{
-		"user explicitly asks for it",
-		"Do not retry or work around a policy denial",
-		"stable advice IDs",
-		"incorrect, unnecessary, or missing",
-		"useful or misleading files",
-		"exactly one reusable repository rule",
-		"file anchors",
-		"stored as a candidate",
+		"ask the user whether they'd like to send RepoGuide feedback",
+		"repoguide_record_feedback",
 	} {
 		if !strings.Contains(instr, want) {
 			t.Fatalf("expected feedback instruction to contain %q", want)
 		}
 	}
+
+	auto := AgentFeedbackInstructionFor("test-repo-id", true)
+	for _, want := range []string{
+		"Do not ask the user first",
+		"repoguide_record_feedback",
+	} {
+		if !strings.Contains(auto, want) {
+			t.Fatalf("expected auto feedback instruction to contain %q", want)
+		}
+	}
+	// The detailed advice_evaluation/candidate_rule guidance now lives on the
+	// repoguide_record_feedback tool description (see mcp_server_test.go),
+	// not in this hook-facing instruction text.
 }
 
 func TestInstructRepoRemovesLegacyMandatoryFeedbackInstruction(t *testing.T) {
 	repo := initTestRepo(t, t.TempDir(), "repo_one")
 	path := filepath.Join(repo, "AGENTS.md")
-	legacy := "# Project\n\n" + AgentFeedbackInstructionFor("repo_one")
+	legacy := "# Project\n\n" + AgentFeedbackInstructionFor("repo_one", false)
 	if err := os.WriteFile(path, []byte(legacy), 0o644); err != nil {
 		t.Fatalf("WriteFile: %v", err)
 	}

@@ -21,6 +21,8 @@ func init() {
 	repoConfigCmd.Flags().BoolP("delete", "d", false, "Remove RepoGuide tracking for this repo")
 	repoConfigCmd.Flags().Bool("enable-hooks", false, "Enable managed commit hooks for this repo")
 	repoConfigCmd.Flags().Bool("disable-hooks", false, "Disable managed commit hooks for this repo")
+	repoConfigCmd.Flags().Bool("auto-feedback", false, "Submit end-of-session feedback automatically, without asking")
+	repoConfigCmd.Flags().Bool("no-auto-feedback", false, "Ask before submitting end-of-session feedback (default)")
 	repoCmd.AddCommand(repoConfigCmd)
 }
 
@@ -34,11 +36,27 @@ func runRepoConfig(cmd *cobra.Command, _ []string) error {
 	del, _ := cmd.Flags().GetBool("delete")
 	enableHooks, _ := cmd.Flags().GetBool("enable-hooks")
 	disableHooks, _ := cmd.Flags().GetBool("disable-hooks")
+	autoFeedback, _ := cmd.Flags().GetBool("auto-feedback")
+	noAutoFeedback, _ := cmd.Flags().GetBool("no-auto-feedback")
 	if del {
 		return runRemove(cmd, nil)
 	}
 	if enableHooks && disableHooks {
 		return fmt.Errorf("choose only one of --enable-hooks or --disable-hooks")
+	}
+	if autoFeedback && noAutoFeedback {
+		return fmt.Errorf("choose only one of --auto-feedback or --no-auto-feedback")
+	}
+	if autoFeedback || noAutoFeedback {
+		if err := config.SetAutoFeedback(autoFeedback); err != nil {
+			return err
+		}
+		if autoFeedback {
+			fmt.Println("Auto-feedback enabled: RepoGuide will submit end-of-session feedback without asking.")
+		} else {
+			fmt.Println("Auto-feedback disabled: RepoGuide will ask before submitting feedback.")
+		}
+		return nil
 	}
 
 	status := repopkg.DetectLocalSetup()
@@ -496,6 +514,11 @@ func printConfigStatus(status repopkg.LocalSetupStatus) {
 		fmt.Println("  Backend:  claude CLI")
 	default:
 		fmt.Println("  Backend:  not configured")
+	}
+	if config.AutoFeedback() {
+		fmt.Println("  Feedback: auto-submitted at end of session")
+	} else {
+		fmt.Println("  Feedback: asks before submitting (--auto-feedback to change)")
 	}
 }
 

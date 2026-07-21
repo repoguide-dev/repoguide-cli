@@ -246,7 +246,7 @@ func TestInstructRepoForClaudeMigratesStaticBlock(t *testing.T) {
 	repo := setupHookTestRepo(t)
 
 	claudeMD := filepath.Join(repo, "CLAUDE.md")
-	existing := "# My project\n\n" + AgentInstructionBriefFor("repo_one") + "\nsome other content\n" + AgentFeedbackInstructionFor("repo_one")
+	existing := "# My project\n\n" + AgentInstructionBriefFor("repo_one") + "\nsome other content\n" + AgentFeedbackInstructionFor("repo_one", false)
 	if err := os.WriteFile(claudeMD, []byte(existing), 0o644); err != nil {
 		t.Fatalf("WriteFile(CLAUDE.md): %v", err)
 	}

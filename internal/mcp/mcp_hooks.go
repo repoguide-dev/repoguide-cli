@@ -6,15 +6,17 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+
+	"github.com/repoguide/repoguide-cli/internal/config"
 )
 
 // Claude Code hooks that replace the static CLAUDE.md instruction blocks with
 // dynamic prompt injection: repoguide_get_repo_experience is suggested as soon
 // as the user states a task (UserPromptSubmit), and repoguide_record_feedback
 // is nudged once, non-blockingly, at the end of a session that actually used
-// RepoGuide (Stop). The nudge only ever asks the agent to ask the user first —
-// feedback transmits private task and repository metadata, so it stays
-// opt-in even when reminded.
+// RepoGuide (Stop). By default the nudge asks the agent to ask the user first,
+// since feedback transmits task and repository metadata; config.AutoFeedback
+// lets a user opt into silent auto-submission instead.
 
 type hookPromptPayload struct {
 	SessionID string `json:"session_id"`
@@ -149,7 +151,7 @@ func RunStopHook(stdin io.Reader, stdout io.Writer, cwd string) error {
 	markHookState(payload.SessionID, "feedback-asked")
 	out, _ := json.Marshal(map[string]any{
 		"decision": "block",
-		"reason":   AgentFeedbackHookReasonFor(repoID),
+		"reason":   AgentFeedbackHookReasonFor(repoID, config.AutoFeedback()),
 	})
 	_, _ = stdout.Write(out)
 	return nil
@@ -183,7 +185,7 @@ func RunGeminiStopHook(stdin io.Reader, stdout io.Writer, cwd string) error {
 	markHookState(payload.SessionID, "feedback-asked")
 	out, _ := json.Marshal(map[string]any{
 		"decision": "deny",
-		"reason":   AgentFeedbackHookReasonFor(repoID),
+		"reason":   AgentFeedbackHookReasonFor(repoID, config.AutoFeedback()),
 	})
 	_, _ = stdout.Write(out)
 	return nil

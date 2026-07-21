@@ -24,7 +24,7 @@ func TestRunManagedCommitHookScrubsInjectedMessagesFromIndex(t *testing.T) {
 		"",
 		AgentInstructionBriefFor("repo_one"),
 		"",
-		AgentFeedbackInstructionFor("repo_one"),
+		AgentFeedbackInstructionFor("repo_one", false),
 	}, "\n")
 	if err := os.WriteFile(filepath.Join(repoRoot, "AGENTS.md"), []byte(content), 0o644); err != nil {
 		t.Fatalf("WriteFile(AGENTS.md): %v", err)

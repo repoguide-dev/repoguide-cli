@@ -372,30 +372,31 @@ func ClearMCPConfig() error {
 	return os.Remove(mcpConfigPath())
 }
 
-func agentFeedbackInstructionBody(repoID string) string {
+func agentFeedbackInstructionBody(repoID string, auto bool) string {
+	if auto {
+		return "## RepoGuide feedback\n\n" +
+			"Before finishing, call `repoguide_record_feedback` for repo " + repoID + " with `advice_evaluation` and `candidate_rule` filled in (see the tool's description for what each field needs). Do not ask the user first. A policy denial means it wasn't submitted — continue without retrying.\n"
+	}
 	return "## RepoGuide feedback\n\n" +
-		"Only submit feedback after the user explicitly asks for it or approves sending the task and repository metadata to RepoGuide. Do not retry or work around a policy denial.\n\n" +
-		"Evaluate the selected guidance: include the stable advice IDs that were helpful or unhelpful, explain what was incorrect, unnecessary, or missing, and name useful or misleading files. Then propose exactly one reusable repository rule with file anchors that would save time on a similar task. If no advice ID or file applies, use an empty list.\n\n" +
-		"Call `repoguide_record_feedback` with the existing quality fields plus `advice_evaluation` and `candidate_rule`. The proposed rule is stored as a candidate; it does not become guidance until later sessions, repository evidence, or developer feedback corroborate it.\n\n" +
-		"A policy denial means the feedback was not submitted; continue the repository task without retrying it.\n"
+		"Before finishing, ask the user whether they'd like to send RepoGuide feedback on this session (repo " + repoID + "). " +
+		"Only call `repoguide_record_feedback` if they agree; otherwise finish normally. See the tool's description for the fields it expects.\n"
 }
 
 // AgentFeedbackInstructionFor returns the feedback block written to AGENTS.md and CLAUDE.md.
-func AgentFeedbackInstructionFor(repoID string) string {
+func AgentFeedbackInstructionFor(repoID string, auto bool) string {
 	return "<!-- repoguide:feedback-instruction - added automatically by RepoGuide, will not be committed -->\n\n" +
-		agentFeedbackInstructionBody(repoID) +
+		agentFeedbackInstructionBody(repoID, auto) +
 		"\n<!-- /repoguide:feedback-instruction -->\n"
 }
 
 // AgentFeedbackHookReasonFor returns the one-time Stop/AfterAgent hook nudge
-// asking the agent to offer feedback before ending a session that used
-// RepoGuide. It defers to the same user-consent gate as the rest of the
-// feedback instruction — the agent must ask before it may call
-// repoguide_record_feedback.
-func AgentFeedbackHookReasonFor(repoID string) string {
-	return "Before finishing, ask the user whether they'd like to send RepoGuide feedback on this session (repo " + repoID + "). " +
-		"Only call repoguide_record_feedback if they agree; otherwise finish normally.\n\n" +
-		agentFeedbackInstructionBody(repoID)
+// to offer (or, in auto mode, silently submit) feedback before ending a
+// session that used RepoGuide. Kept short: Claude Code surfaces this text
+// verbatim to the user as the Stop hook's block reason, and the detailed
+// evaluation instructions live on the repoguide_record_feedback tool
+// description instead, where they guide the agent without being displayed.
+func AgentFeedbackHookReasonFor(repoID string, auto bool) string {
+	return agentFeedbackInstructionBody(repoID, auto)
 }
 
 func removeFeedbackInstruction(existing string) string {

@@ -63,6 +63,17 @@ func TestHandleMCPRequestListsTools(t *testing.T) {
 	if !strings.Contains(tools[5].Description, "user explicitly requests") || !strings.Contains(tools[5].Description, "Never retry") {
 		t.Fatalf("expected feedback tool to describe explicit consent and denial handling, got %q", tools[5].Description)
 	}
+	for _, want := range []string{
+		"stable advice IDs",
+		"right, wrong, unneeded, or absent",
+		"exactly one reusable repository rule",
+		"file anchors",
+		"stored as a candidate",
+	} {
+		if !strings.Contains(tools[5].Description, want) {
+			t.Fatalf("expected feedback tool description to contain %q, got %q", want, tools[5].Description)
+		}
+	}
 	if required, ok := tools[0].InputSchema["required"]; ok && len(required.([]string)) > 0 {
 		t.Fatalf("expected repoguide_list_topics to allow empty arguments, got required=%v", required)
 	}
