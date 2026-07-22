@@ -8,6 +8,8 @@ import (
 	"database/sql"
 	"encoding/json"
 	"fmt"
+	"math/rand"
+	"strings"
 	"time"
 
 	"github.com/google/uuid"
@@ -20,14 +22,26 @@ import (
 type Store struct{ db *sql.DB }
 
 // Open opens (or creates) the SQLite database at path and runs migrations.
+// Several repoguide processes (one per open Claude/Codex session) can start
+// at once and race on the same file, so migrate() is retried with jittered
+// backoff on "database is locked" rather than failing the whole process.
+// ponytail: 5 attempts is enough to ride out a cold-start pileup; a real
+// single-writer daemon would remove the race instead, add if this recurs.
 func Open(path string) (*Store, error) {
-	db, err := sql.Open("sqlite", path+"?_journal=WAL&_busy_timeout=5000&_fk=on")
+	db, err := sql.Open("sqlite", path+"?_journal=WAL&_busy_timeout=10000&_fk=on")
 	if err != nil {
 		return nil, err
 	}
 	db.SetMaxOpenConns(1)
 	s := &Store{db: db}
-	return s, s.migrate()
+	for attempt := 0; attempt < 5; attempt++ {
+		err = s.migrate()
+		if err == nil || !strings.Contains(err.Error(), "database is locked") {
+			return s, err
+		}
+		time.Sleep(time.Duration(50+rand.Intn(200)) * time.Millisecond * time.Duration(attempt+1))
+	}
+	return s, err
 }
 
 func (s *Store) Close() error { return s.db.Close() }

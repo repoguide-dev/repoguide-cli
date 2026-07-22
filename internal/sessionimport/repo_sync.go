@@ -353,6 +353,100 @@ func (c CloudClient) JoinTeam(inviteCode string) (*TeamSummary, error) {
 	return &payload.Team, nil
 }
 
+func (c CloudClient) CreateTeam(name string) (*TeamSummary, error) {
+	body, err := json.Marshal(map[string]string{"name": strings.TrimSpace(name)})
+	if err != nil {
+		return nil, err
+	}
+	req, err := c.newRequest(http.MethodPost, "/api/teams", bytes.NewReader(body))
+	if err != nil {
+		return nil, err
+	}
+	req.Header.Set("Authorization", "Bearer "+c.Token)
+	req.Header.Set("Content-Type", "application/json")
+	resp, err := c.httpClient().Do(req)
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode >= 300 {
+		return nil, backendRequestError("team create failed", resp)
+	}
+	var payload struct {
+		Team TeamSummary `json:"team"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&payload); err != nil {
+		return nil, err
+	}
+	return &payload.Team, nil
+}
+
+type TeamInvite struct {
+	ID    string `json:"id"`
+	Email string `json:"email"`
+}
+
+func (c CloudClient) CreateTeamInvite(teamID, email string) (*TeamInvite, error) {
+	body, err := json.Marshal(map[string]string{"email": strings.TrimSpace(email)})
+	if err != nil {
+		return nil, err
+	}
+	req, err := c.newRequest(http.MethodPost, "/api/teams/"+url.PathEscape(teamID)+"/invites", bytes.NewReader(body))
+	if err != nil {
+		return nil, err
+	}
+	req.Header.Set("Authorization", "Bearer "+c.Token)
+	req.Header.Set("Content-Type", "application/json")
+	resp, err := c.httpClient().Do(req)
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode >= 300 {
+		return nil, backendRequestError("team invite failed", resp)
+	}
+	var payload struct {
+		Invite TeamInvite `json:"invite"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&payload); err != nil {
+		return nil, err
+	}
+	return &payload.Invite, nil
+}
+
+func (c CloudClient) AddTeamRepo(teamID, repoID, repoRoot string) (*TeamRepo, error) {
+	body, err := json.Marshal(map[string]string{
+		"repo_id":   strings.TrimSpace(repoID),
+		"repo_root": repoRoot,
+		"repo_name": filepath.Base(repoRoot),
+		"repo_url":  remoteRepoURL(repoRoot),
+	})
+	if err != nil {
+		return nil, err
+	}
+	req, err := c.newRequest(http.MethodPost, "/api/teams/"+url.PathEscape(teamID)+"/repos", bytes.NewReader(body))
+	if err != nil {
+		return nil, err
+	}
+	req.Header.Set("Authorization", "Bearer "+c.Token)
+	req.Header.Set("Content-Type", "application/json")
+	resp, err := c.httpClient().Do(req)
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode >= 300 {
+		return nil, backendRequestError("team add repo failed", resp)
+	}
+	var payload struct {
+		Repo TeamRepo `json:"repo"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&payload); err != nil {
+		return nil, err
+	}
+	return &payload.Repo, nil
+}
+
 func (c CloudClient) ListTeamRepos(teamID string) ([]TeamRepo, error) {
 	if strings.TrimSpace(c.Token) == "" || strings.TrimSpace(c.BaseURL) == "" {
 		return nil, nil

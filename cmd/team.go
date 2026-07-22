@@ -19,7 +19,11 @@ func init() {
 	teamJoinCmd.Flags().String("invite-code", "", "Team invite code")
 	teamJoinCmd.Flags().String("repo", "", "Team repo ID or repo name")
 	teamJoinCmd.Flags().String("path", "", "Path to an existing local checkout")
+	teamAddRepoCmd.Flags().String("path", "", "Path to the local checkout to add (default: current directory)")
 	teamCmd.AddCommand(teamJoinCmd)
+	teamCmd.AddCommand(teamCreateCmd)
+	teamCmd.AddCommand(teamInviteCmd)
+	teamCmd.AddCommand(teamAddRepoCmd)
 	root.AddCommand(teamCmd)
 }
 
@@ -32,6 +36,86 @@ var teamJoinCmd = &cobra.Command{
 	Use:   "join",
 	Short: "Connect a local checkout to a shared team repo",
 	RunE:  runTeamJoin,
+}
+
+var teamCreateCmd = &cobra.Command{
+	Use:   "create <name>",
+	Short: "Create a new team",
+	Args:  cobra.ExactArgs(1),
+	RunE:  runTeamCreate,
+}
+
+func runTeamCreate(_ *cobra.Command, args []string) error {
+	if err := ensureActiveLogin(); err != nil {
+		return err
+	}
+	token, ok := clientauth.Load()
+	if !ok {
+		return fmt.Errorf("not logged in")
+	}
+	client := sessionimport.CloudClient{BaseURL: getBackendURL(), Token: token.Token}
+	team, err := client.CreateTeam(args[0])
+	if err != nil {
+		return err
+	}
+	fmt.Printf("Created team %s (%s), invite code: %s\n", team.Name, team.ID, team.InviteCode)
+	return nil
+}
+
+var teamInviteCmd = &cobra.Command{
+	Use:   "invite <team-id> <email>",
+	Short: "Invite a user to a team",
+	Args:  cobra.ExactArgs(2),
+	RunE:  runTeamInvite,
+}
+
+func runTeamInvite(_ *cobra.Command, args []string) error {
+	if err := ensureActiveLogin(); err != nil {
+		return err
+	}
+	token, ok := clientauth.Load()
+	if !ok {
+		return fmt.Errorf("not logged in")
+	}
+	client := sessionimport.CloudClient{BaseURL: getBackendURL(), Token: token.Token}
+	invite, err := client.CreateTeamInvite(args[0], args[1])
+	if err != nil {
+		return err
+	}
+	fmt.Printf("Invited %s\n", invite.Email)
+	return nil
+}
+
+var teamAddRepoCmd = &cobra.Command{
+	Use:   "add-repo <team-id>",
+	Short: "Add the local repo checkout to a team",
+	Args:  cobra.ExactArgs(1),
+	RunE:  runTeamAddRepo,
+}
+
+func runTeamAddRepo(cmd *cobra.Command, args []string) error {
+	if err := ensureActiveLogin(); err != nil {
+		return err
+	}
+	repoPath, _ := cmd.Flags().GetString("path")
+	if strings.TrimSpace(repoPath) == "" {
+		repoPath, _ = os.Getwd()
+	}
+	repoID, err := internal.GitRepoID(repoPath)
+	if err != nil || strings.TrimSpace(repoID) == "" {
+		return fmt.Errorf("no repoguide repo configured at %s; run `repoguide init` first", repoPath)
+	}
+	token, ok := clientauth.Load()
+	if !ok {
+		return fmt.Errorf("not logged in")
+	}
+	client := sessionimport.CloudClient{BaseURL: getBackendURL(), Token: token.Token}
+	repo, err := client.AddTeamRepo(args[0], repoID, repoPath)
+	if err != nil {
+		return err
+	}
+	fmt.Printf("Added %s to team\n", repoLabel(*repo))
+	return nil
 }
 
 func runTeamJoin(cmd *cobra.Command, _ []string) error {

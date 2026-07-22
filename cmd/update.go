@@ -24,7 +24,10 @@ func runUpdate(_ *cobra.Command, _ []string) {
 	}
 
 	fmt.Println("==> Fetching latest repoguide release...")
-	c := exec.Command("sh", "-c", "curl -fsSL https://repoguide.dev/install.sh | sh")
+	// ponytail: curl's built-in retry backoff (1s,2s,4s...capped at 20s) covers
+	// transient 5xx/network errors; --retry-all-errors makes it retry HTTP
+	// status failures too, not just connection errors.
+	c := exec.Command("sh", "-c", "curl -fsSL --retry 5 --retry-all-errors --retry-max-time 60 https://repoguide.dev/install.sh | sh")
 	c.Stdout = os.Stdout
 	c.Stderr = os.Stderr
 	if err := c.Run(); err != nil {

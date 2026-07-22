@@ -8,6 +8,7 @@ import (
 	"net"
 	"net/http"
 	"net/url"
+	"os"
 	"os/exec"
 	"runtime"
 	"strings"
@@ -25,6 +26,8 @@ func init() {
 	_ = loginCmd.Flags().MarkHidden("ci")
 	loginCmd.Flags().String("email", "", "Email for password login (scripting; skips device flow)")
 	loginCmd.Flags().String("password", "", "Password for password login (scripting; skips device flow)")
+	registerCmd.Flags().String("email", "", "Email for password registration (scripting; skips device flow)")
+	registerCmd.Flags().String("password", "", "Password for password registration (scripting; skips device flow)")
 	root.AddCommand(loginCmd)
 	root.AddCommand(logoutCmd)
 	root.AddCommand(registerCmd)
@@ -115,7 +118,45 @@ func passwordLogin(email, password string) error {
 var registerCmd = &cobra.Command{
 	Use:   "register",
 	Short: "Create a RepoGuide account",
-	RunE:  func(_ *cobra.Command, _ []string) error { return deviceFlow("register") },
+	RunE: func(cmd *cobra.Command, _ []string) error {
+		email, _ := cmd.Flags().GetString("email")
+		password, _ := cmd.Flags().GetString("password")
+		if email != "" || password != "" {
+			return passwordRegister(email, password)
+		}
+		return deviceFlow("register")
+	},
+}
+
+// passwordRegister creates an account against POST /api/auth/register and saves the token, without any TUI.
+func passwordRegister(email, password string) error {
+	if email == "" || password == "" {
+		return fmt.Errorf("--email and --password are both required")
+	}
+	baseURL, err := validatedBackendURL()
+	if err != nil {
+		return err
+	}
+	body, _ := json.Marshal(map[string]string{"email": email, "password": password})
+	resp, err := postJSON(baseURL+"/api/auth/register", bytes.NewReader(body))
+	if err != nil {
+		return fmt.Errorf("cannot reach backend: %w", err)
+	}
+	defer resp.Body.Close()
+
+	var r tokenResp
+	json.NewDecoder(resp.Body).Decode(&r)
+	if resp.StatusCode != 201 {
+		if r.Error == "" {
+			r.Error = "registration failed"
+		}
+		return fmt.Errorf("%s", r.Error)
+	}
+	if err := clientauth.Save(clientauth.Token{Token: r.Token, Email: email}); err != nil {
+		return fmt.Errorf("failed to save credentials: %w", err)
+	}
+	fmt.Printf("Registered as %s\n", email)
+	return nil
 }
 
 var logoutCmd = &cobra.Command{
@@ -293,6 +334,9 @@ func validatedBackendURL() (string, error) {
 		return raw, nil
 	}
 	if u.Scheme == "http" && isLoopbackBackendHost(u.Hostname()) {
+		return raw, nil
+	}
+	if u.Scheme == "http" && os.Getenv("REPOGUIDE_ALLOW_INSECURE_BACKEND") == "1" {
 		return raw, nil
 	}
 	return "", fmt.Errorf("backend URL must use https, except loopback http for local development")

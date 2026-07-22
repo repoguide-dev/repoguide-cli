@@ -2,10 +2,11 @@ package services
 
 import (
 	"context"
-	"crypto/rand"
+	cryptorand "crypto/rand"
 	"encoding/hex"
 	"fmt"
 	"log/slog"
+	"math/rand"
 	"strings"
 	"time"
 
@@ -14,6 +15,24 @@ import (
 	storecontract "github.com/repoguide/repoguide-cli/internal/store"
 	"github.com/repoguide/repoguide-core/model"
 )
+
+// withRetry retries fn with jittered backoff when sqlite reports the db as
+// locked, which happens routinely when several repoguide processes (one per
+// open Claude/Codex session) hit the local db at once.
+// ponytail: fixed 4 attempts, no external backoff lib — this is the only
+// contention point that needed retrying.
+func withRetry[T any](fn func() (T, error)) (T, error) {
+	var v T
+	var err error
+	for attempt := 0; attempt < 4; attempt++ {
+		v, err = fn()
+		if err == nil || !strings.Contains(err.Error(), "database is locked") {
+			return v, err
+		}
+		time.Sleep(time.Duration(50+rand.Intn(150)) * time.Millisecond * time.Duration(attempt+1))
+	}
+	return v, err
+}
 
 type JobService struct {
 	store    storecontract.Store
@@ -48,12 +67,12 @@ func (s *JobService) RunStartupMaintenance(ctx context.Context) {
 // EnqueuePendingClassification scans local repos for unclassified feedback that
 // is not already covered by a queued or running classify job.
 func (s *JobService) EnqueuePendingClassification(ctx context.Context) {
-	repos, err := s.store.Repos().List(ctx)
+	repos, err := withRetry(func() ([]*model.Repo, error) { return s.store.Repos().List(ctx) })
 	if err != nil {
 		slog.Warn("enqueue classify pending: list repos failed", "err", err)
 		return
 	}
-	pending, err := s.store.ClassifyJobs().ListPending(ctx)
+	pending, err := withRetry(func() ([]model.ContextPatchJob, error) { return s.store.ClassifyJobs().ListPending(ctx) })
 	if err != nil {
 		slog.Warn("enqueue classify pending: list jobs failed", "err", err)
 		return
@@ -98,12 +117,12 @@ func (s *JobService) EnqueuePendingClassification(ctx context.Context) {
 // EnqueueStartupFollowups scans local repos for already-classified feedback that
 // still lacks a follow-up patch job, then enqueues the supported patch jobs.
 func (s *JobService) EnqueueStartupFollowups(ctx context.Context) {
-	repos, err := s.store.Repos().List(ctx)
+	repos, err := withRetry(func() ([]*model.Repo, error) { return s.store.Repos().List(ctx) })
 	if err != nil {
 		slog.Warn("enqueue startup followups: list repos failed", "err", err)
 		return
 	}
-	pending, err := s.store.Jobs().ListPending(ctx)
+	pending, err := withRetry(func() ([]model.ContextPatchJob, error) { return s.store.Jobs().ListPending(ctx) })
 	if err != nil {
 		slog.Warn("enqueue startup followups: list jobs failed", "err", err)
 		return
@@ -222,7 +241,7 @@ func (s *JobService) drainFromStore(ctx context.Context, js interface {
 	ListPending(context.Context) ([]model.ContextPatchJob, error)
 	UpdateStatus(context.Context, string, string, int) error
 }, run func(context.Context, *model.ContextPatchJob) error) {
-	jobs, err := js.ListPending(ctx)
+	jobs, err := withRetry(func() ([]model.ContextPatchJob, error) { return js.ListPending(ctx) })
 	if err != nil {
 		slog.Warn("drainFromStore: list jobs failed", "err", err)
 		return
@@ -614,6 +633,6 @@ func newTopicFeedbackText(fb model.MCPFeedback) string {
 
 func randID() string {
 	var b [8]byte
-	_, _ = rand.Read(b[:])
+	_, _ = cryptorand.Read(b[:])
 	return hex.EncodeToString(b[:])
 }
