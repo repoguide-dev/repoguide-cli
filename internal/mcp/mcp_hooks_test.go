@@ -104,6 +104,18 @@ func TestRunStopHookNudgesOnceThenStopsForSafety(t *testing.T) {
 
 	stopPayload := `{"session_id":"sess-1","cwd":"` + repo + `"}`
 	var out bytes.Buffer
+
+	// The first Stop of a session is only recorded, never nudged — it may
+	// just be the turn pausing for a background Task/Agent call, not the
+	// session actually ending.
+	if err := RunStopHook(strings.NewReader(stopPayload), &out, repo); err != nil {
+		t.Fatalf("RunStopHook (first stop): %v", err)
+	}
+	if out.String() != "" {
+		t.Fatalf("expected no nudge on the first Stop of a session, got %q", out.String())
+	}
+
+	out.Reset()
 	if err := RunStopHook(strings.NewReader(stopPayload), &out, repo); err != nil {
 		t.Fatalf("RunStopHook: %v", err)
 	}

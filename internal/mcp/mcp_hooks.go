@@ -127,6 +127,13 @@ func repoToolUsedThisSession(repoID, sessionID string) bool {
 // session, nudge the agent once to offer feedback before it stops. The
 // stop_hook_active guard means this never fires twice in a row, so it can
 // never hang a session — it is a single reminder, not an enforcement gate.
+//
+// Stop fires at the end of every turn, not just when the session truly ends
+// — e.g. delegating to a background Task/Agent tool also stops the main
+// turn. Nudging on that very first Stop (right after the routing call) reads
+// as nonsense: feedback about work that hasn't happened yet. So the first
+// Stop of a session is only ever recorded, never nudged; the nudge waits for
+// a later Stop, by which point real work has had a chance to happen.
 func RunStopHook(stdin io.Reader, stdout io.Writer, cwd string) error {
 	var payload hookStopPayload
 	if err := json.NewDecoder(stdin).Decode(&payload); err != nil {
@@ -145,13 +152,23 @@ func RunStopHook(stdin io.Reader, stdout io.Writer, cwd string) error {
 	if !repoToolUsedThisSession(repoID, payload.SessionID) {
 		return nil
 	}
+	if !hookStateExists(payload.SessionID, "stop-seen") {
+		markHookState(payload.SessionID, "stop-seen")
+		return nil
+	}
 	if hookStateExists(payload.SessionID, "feedback-asked") {
 		return nil
 	}
 	markHookState(payload.SessionID, "feedback-asked")
+	auto := config.AutoFeedback()
 	out, _ := json.Marshal(map[string]any{
 		"decision": "block",
-		"reason":   AgentFeedbackHookReasonFor(repoID, config.AutoFeedback()),
+		"reason":   AgentFeedbackHookReasonFor(repoID, auto),
+		// In ask mode the block reason must stay visible so the user sees the
+		// question. In auto mode nothing needs the user's attention, so hide
+		// it from the transcript ("Stop hook error" banner is what triggered
+		// this fix — auto mode is supposed to be silent).
+		"suppressOutput": auto,
 	})
 	_, _ = stdout.Write(out)
 	return nil
@@ -177,6 +194,10 @@ func RunGeminiStopHook(stdin io.Reader, stdout io.Writer, cwd string) error {
 		return nil
 	}
 	if !repoToolUsedThisSession(repoID, payload.SessionID) {
+		return nil
+	}
+	if !hookStateExists(payload.SessionID, "stop-seen") {
+		markHookState(payload.SessionID, "stop-seen")
 		return nil
 	}
 	if hookStateExists(payload.SessionID, "feedback-asked") {

@@ -375,7 +375,7 @@ func ClearMCPConfig() error {
 func agentFeedbackInstructionBody(repoID string, auto bool) string {
 	if auto {
 		return "## RepoGuide feedback\n\n" +
-			"Before finishing, call `repoguide_record_feedback` for repo " + repoID + " with `advice_evaluation` and `candidate_rule` filled in (see the tool's description for what each field needs). Do not ask the user first. A policy denial means it wasn't submitted — continue without retrying.\n"
+			"If you judge the task/session is actually done, call `repoguide_record_feedback` for repo " + repoID + " with `advice_evaluation` and `candidate_rule` filled in (see the tool's description for what each field needs); otherwise keep going without submitting yet. Do not ask the user first. A policy denial means it wasn't submitted — continue without retrying.\n"
 	}
 	return "## RepoGuide feedback\n\n" +
 		"Before finishing, ask the user whether they'd like to send RepoGuide feedback on this session (repo " + repoID + "). " +
