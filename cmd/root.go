@@ -69,6 +69,7 @@ func init() {
 		if skipBackgroundTasks(cmd) {
 			return
 		}
+		refuseIfMajorBehind(cmd)
 		setupFileLogging()
 		go refreshCachedAuthProfile()
 		go backgroundSync()
@@ -79,6 +80,30 @@ func init() {
 // concurrently recreating it through auth refresh or repository sync.
 func skipBackgroundTasks(cmd *cobra.Command) bool {
 	return cmd.Name() == "purge"
+}
+
+// refuseIfMajorBehind exits the process if a newer major version has been
+// released. It fails open (does nothing) if the version can't be determined,
+// e.g. offline, so a network hiccup never blocks the CLI from running.
+func refuseIfMajorBehind(cmd *cobra.Command) {
+	if Version == "dev" || cmd.Name() == "update" {
+		return
+	}
+	latest, err := latestReleaseVersion(2 * time.Second)
+	if err != nil {
+		return
+	}
+	if semverMajor(latest) > semverMajor(Version) {
+		fmt.Fprintf(os.Stderr, "repoguide %s is a major version behind the latest (%s). Run `repoguide update` first.\n", Version, latest)
+		os.Exit(1)
+	}
+}
+
+// semverMajor returns the major component of a version string like "1.2.3" or "v1.2.3".
+func semverMajor(v string) int {
+	v = strings.TrimPrefix(v, "v")
+	major, _ := strconv.Atoi(strings.SplitN(v, ".", 2)[0])
+	return major
 }
 
 // semverLess returns true if version a is less than version b (e.g. "1.2.3" < "1.3.0").
@@ -130,7 +155,7 @@ func backgroundSync() {
 	client := sessionimport.CloudClient{BaseURL: getBackendURL(), Token: token.Token}
 	if Version != "dev" {
 		if required, err := client.CheckRequiredVersion(); err == nil && semverLess(Version, required) {
-			fmt.Fprintf(os.Stderr, "\nWarning: your repoguide CLI (%s) is outdated (required: %s). Please upgrade.\n\n", Version, required)
+			autoUpdateOutdatedCLI(required)
 		}
 	}
 	if len(cloudRepos) == 0 {

@@ -42,20 +42,55 @@ func runUpdate(_ *cobra.Command, _ []string) {
 	}
 
 	fmt.Println("==> Checking latest repoguide release...")
-	version, err := latestReleaseVersion()
+	updated, latest, err := selfUpdate(exe, 30*time.Second)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "update failed: %v\n", err)
 		os.Exit(1)
 	}
-	if !semverLess(Version, version) {
+	if !updated {
 		fmt.Printf("Already up to date (%s).\n", Version)
 		return
+	}
+	fmt.Printf("==> Updated to %s\n", latest)
+}
+
+// autoUpdateOutdatedCLI is called from the background sync path once the
+// backend reports the running CLI is below its required minimum version. It
+// applies the update silently; the new binary takes effect on next launch.
+func autoUpdateOutdatedCLI(required string) {
+	exe, err := os.Executable()
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "\nrepoguide auto-update failed: %v. Run `repoguide update` manually.\n\n", err)
+		return
+	}
+	if strings.Contains(exe, "Cellar") {
+		fmt.Fprintf(os.Stderr, "\nWarning: your repoguide CLI (%s) is outdated (required: %s). Run `brew upgrade repoguide`.\n\n", Version, required)
+		return
+	}
+	updated, latest, err := selfUpdate(exe, 30*time.Second)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "\nrepoguide auto-update failed: %v. Run `repoguide update` manually.\n\n", err)
+		return
+	}
+	if updated {
+		fmt.Fprintf(os.Stderr, "\nUpdated repoguide CLI from %s to %s. Restart to use the new version.\n\n", Version, latest)
+	}
+}
+
+// selfUpdate downloads and installs the latest release if it is newer than
+// Version, replacing exe in place. It reports whether an update was applied.
+func selfUpdate(exe string, timeout time.Duration) (updated bool, latest string, err error) {
+	latest, err = latestReleaseVersion(timeout)
+	if err != nil {
+		return false, "", err
+	}
+	if !semverLess(Version, latest) {
+		return false, latest, nil
 	}
 
 	arch := runtime.GOARCH
 	if arch != "amd64" && arch != "arm64" {
-		fmt.Fprintf(os.Stderr, "update failed: unsupported architecture %s\n", arch)
-		os.Exit(1)
+		return false, latest, fmt.Errorf("unsupported architecture %s", arch)
 	}
 	goos := runtime.GOOS
 	ext := "tar.gz"
@@ -66,43 +101,34 @@ func runUpdate(_ *cobra.Command, _ []string) {
 	if goos == "windows" {
 		binName = "repoguide.exe"
 	}
-	archive := fmt.Sprintf("repoguide_%s_%s_%s.%s", version, goos, arch, ext)
-	base := fmt.Sprintf("https://github.com/%s/releases/download/v%s", updateRepo, version)
+	archive := fmt.Sprintf("repoguide_%s_%s_%s.%s", latest, goos, arch, ext)
+	base := fmt.Sprintf("https://github.com/%s/releases/download/v%s", updateRepo, latest)
 
-	fmt.Printf("==> Downloading %s\n", archive)
-	data, err := httpGet(base + "/" + archive)
+	data, err := httpGet(base+"/"+archive, timeout)
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "update failed: %v\n", err)
-		os.Exit(1)
+		return false, latest, err
 	}
-	checksums, err := httpGet(base + "/checksums.txt")
+	checksums, err := httpGet(base+"/checksums.txt", timeout)
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "update failed: %v\n", err)
-		os.Exit(1)
+		return false, latest, err
 	}
-
-	fmt.Println("==> Verifying checksum")
 	if err := verifyChecksum(data, checksums, archive); err != nil {
-		fmt.Fprintf(os.Stderr, "update failed: %v\n", err)
-		os.Exit(1)
+		return false, latest, err
 	}
-
 	binData, err := extractBinary(data, ext, binName)
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "update failed: %v\n", err)
-		os.Exit(1)
+		return false, latest, err
 	}
-
 	if err := replaceExecutable(exe, binData); err != nil {
-		fmt.Fprintf(os.Stderr, "update failed: %v\n", err)
-		os.Exit(1)
+		return false, latest, err
 	}
-
-	fmt.Printf("==> Updated to %s\n", version)
+	return true, latest, nil
 }
 
-func latestReleaseVersion() (string, error) {
-	data, err := httpGet(fmt.Sprintf("https://api.github.com/repos/%s/releases/latest", updateRepo))
+// latestReleaseVersion returns the newest published release version (without
+// the "v" prefix). timeout bounds the GitHub API call.
+func latestReleaseVersion(timeout time.Duration) (string, error) {
+	data, err := httpGet(fmt.Sprintf("https://api.github.com/repos/%s/releases/latest", updateRepo), timeout)
 	if err != nil {
 		return "", err
 	}
@@ -119,8 +145,8 @@ func latestReleaseVersion() (string, error) {
 	return version, nil
 }
 
-func httpGet(url string) ([]byte, error) {
-	client := &http.Client{Timeout: 30 * time.Second}
+func httpGet(url string, timeout time.Duration) ([]byte, error) {
+	client := &http.Client{Timeout: timeout}
 	req, err := http.NewRequest(http.MethodGet, url, nil)
 	if err != nil {
 		return nil, err
