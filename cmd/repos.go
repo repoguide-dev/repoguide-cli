@@ -332,6 +332,10 @@ func (m reposModel) updateDetailView(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			embedded:     true,
 			parentFooter: footerHint("enter open", "esc back", "r reload", "q back"),
 		})
+		// ponytail: new child starts at zero size until a real resize fires; sync it
+		// to the parent's known size now instead of waiting for the next WindowSizeMsg.
+		child, _ := m.sessionsChild.Update(tea.WindowSizeMsg{Width: m.width, Height: m.height})
+		m.sessionsChild = child.(sessionsModel)
 		m.view = reposSessionsView
 		return m, m.sessionsChild.Init()
 	case "i":
