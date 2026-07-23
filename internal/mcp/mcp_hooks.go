@@ -161,14 +161,15 @@ func RunStopHook(stdin io.Reader, stdout io.Writer, cwd string) error {
 	}
 	markHookState(payload.SessionID, "feedback-asked")
 	auto := config.AutoFeedback()
+	// hookSpecificOutput.additionalContext (not decision:"block") keeps the
+	// turn going without Claude Code labeling it a "Stop hook error" — the
+	// old decision:"block" form rendered as an error banner to the user even
+	// with suppressOutput set, which is what this replaced.
 	out, _ := json.Marshal(map[string]any{
-		"decision": "block",
-		"reason":   AgentFeedbackHookReasonFor(repoID, auto),
-		// In ask mode the block reason must stay visible so the user sees the
-		// question. In auto mode nothing needs the user's attention, so hide
-		// it from the transcript ("Stop hook error" banner is what triggered
-		// this fix — auto mode is supposed to be silent).
-		"suppressOutput": auto,
+		"hookSpecificOutput": map[string]any{
+			"hookEventName":     "Stop",
+			"additionalContext": AgentFeedbackHookReasonFor(repoID, auto),
+		},
 	})
 	_, _ = stdout.Write(out)
 	return nil

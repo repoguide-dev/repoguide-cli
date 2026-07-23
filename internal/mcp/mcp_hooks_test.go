@@ -123,12 +123,13 @@ func TestRunStopHookNudgesOnceThenStopsForSafety(t *testing.T) {
 	if err := json.Unmarshal(out.Bytes(), &result); err != nil {
 		t.Fatalf("expected a feedback nudge, got %q: %v", out.String(), err)
 	}
-	if result["decision"] != "block" {
-		t.Fatalf("expected decision=block, got %#v", result)
+	specific, _ := result["hookSpecificOutput"].(map[string]any)
+	if specific["hookEventName"] != "Stop" {
+		t.Fatalf("expected hookEventName=Stop, got %#v", result)
 	}
-	reason, _ := result["reason"].(string)
+	reason, _ := specific["additionalContext"].(string)
 	if !strings.Contains(reason, "repo_one") || !strings.Contains(reason, "ask the user") {
-		t.Fatalf("expected reason to ask the user before recording feedback, got %q", reason)
+		t.Fatalf("expected additionalContext to ask the user before recording feedback, got %q", reason)
 	}
 
 	// A second Stop this turn (stop_hook_active) must never nudge again.
