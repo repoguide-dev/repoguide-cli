@@ -80,6 +80,9 @@ func validateBackendURL(raw string) (string, error) {
 	if (u.Scheme == "http" || u.Scheme == "https") && isLoopbackHost(host) {
 		return raw, nil
 	}
+	if u.Scheme == "http" && os.Getenv("REPOGUIDE_ALLOW_INSECURE_BACKEND") == "1" {
+		return raw, nil
+	}
 	return "", fmt.Errorf("backend URL host is not allowed")
 }
 
