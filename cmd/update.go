@@ -152,15 +152,33 @@ func httpGet(url string, timeout time.Duration) ([]byte, error) {
 		return nil, err
 	}
 	req.Header.Set("User-Agent", "repoguide-cli")
+	// ponytail: unauthenticated api.github.com is 60 req/hr per IP, which the
+	// startup check shares with every other tool on the machine. Use a token
+	// when one happens to be in the environment; otherwise accept the limit.
+	if tok := firstEnv("GH_TOKEN", "GITHUB_TOKEN"); tok != "" {
+		req.Header.Set("Authorization", "Bearer "+tok)
+	}
 	resp, err := client.Do(req)
 	if err != nil {
 		return nil, err
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode != http.StatusOK {
+		if resp.StatusCode == http.StatusForbidden && resp.Header.Get("X-RateLimit-Remaining") == "0" {
+			return nil, fmt.Errorf("GET %s: GitHub API rate limit exceeded (set GH_TOKEN to raise it)", url)
+		}
 		return nil, fmt.Errorf("GET %s: %s", url, resp.Status)
 	}
 	return io.ReadAll(resp.Body)
+}
+
+func firstEnv(names ...string) string {
+	for _, n := range names {
+		if v := os.Getenv(n); v != "" {
+			return v
+		}
+	}
+	return ""
 }
 
 func verifyChecksum(archiveData, checksumsFile []byte, archiveName string) error {

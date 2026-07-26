@@ -1,6 +1,6 @@
-#!/usr/bin/env bash
+#!/usr/bin/env sh
 # Install repoguide: curl -fsSL https://repoguide.dev/install.sh | sh
-set -euo pipefail
+set -eu
 
 REPO="repoguide-dev/repoguide-releases"
 BIN="repoguide"
