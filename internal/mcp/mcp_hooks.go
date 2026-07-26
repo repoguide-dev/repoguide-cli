@@ -69,14 +69,22 @@ func RunPromptHook(stdin io.Reader, stdout io.Writer, cwd string) error {
 	if payload.SessionID == "" || strings.TrimSpace(payload.Prompt) == "" {
 		return nil
 	}
-	if hookStateExists(payload.SessionID, "prompted") {
-		return nil
-	}
 	repoID, err := GitRepoID(cwd)
 	if err != nil || repoID == "" {
 		return nil
 	}
-	markHookState(payload.SessionID, "prompted")
+	// ponytail: re-emit until the agent actually calls a RepoGuide tool, rather
+	// than once per session. A session whose first prompt is trivial ("hi", a
+	// git question) used to burn the only shot and never route again.
+	if hookStateExists(payload.SessionID, "prompted") && repoToolUsedThisSession(repoID, payload.SessionID) {
+		return nil
+	}
+	// The "prompted" marker doubles as the session baseline for
+	// repoToolUsedThisSession, so only stamp it once — rewriting it would move
+	// the mtime forward and hide tool use from earlier in the same session.
+	if !hookStateExists(payload.SessionID, "prompted") {
+		markHookState(payload.SessionID, "prompted")
+	}
 	_, _ = io.WriteString(stdout, AgentInstructionBriefFor(repoID))
 	return nil
 }

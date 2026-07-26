@@ -20,7 +20,7 @@ func setupHookTestRepo(t *testing.T) string {
 	return initTestRepo(t, filepath.Join(tempDir, "repo"), "repo_one")
 }
 
-func TestRunPromptHookInjectsOncePerSession(t *testing.T) {
+func TestRunPromptHookRepeatsUntilToolUsed(t *testing.T) {
 	repo := setupHookTestRepo(t)
 
 	payload := `{"session_id":"sess-1","prompt":"fix the login bug","cwd":"` + repo + `"}`
@@ -36,12 +36,23 @@ func TestRunPromptHookInjectsOncePerSession(t *testing.T) {
 		t.Fatalf("expected instruction to embed repo id, got %q", out.String())
 	}
 
+	// The agent ignored it: the next prompt must re-inject rather than go silent.
 	out.Reset()
 	if err := RunPromptHook(strings.NewReader(payload), &out, repo); err != nil {
 		t.Fatalf("RunPromptHook (second call): %v", err)
 	}
+	if !strings.Contains(out.String(), "repoguide_get_repo_experience") {
+		t.Fatalf("expected re-injection while no RepoGuide tool has been used, got %q", out.String())
+	}
+
+	// Once a RepoGuide tool is actually called, stop nagging.
+	markHookState("repo_one", "tool-used")
+	out.Reset()
+	if err := RunPromptHook(strings.NewReader(payload), &out, repo); err != nil {
+		t.Fatalf("RunPromptHook (third call): %v", err)
+	}
 	if out.String() != "" {
-		t.Fatalf("expected no output on second prompt of same session, got %q", out.String())
+		t.Fatalf("expected no output after tool use, got %q", out.String())
 	}
 }
 

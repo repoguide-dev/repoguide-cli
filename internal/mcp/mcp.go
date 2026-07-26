@@ -11,7 +11,7 @@ import (
 
 // hintVersion is the version of the MCP instruction text embedded in the CLI.
 // Increment whenever AgentInstructionBriefFor or AgentInstructionFor changes.
-const hintVersion = 7
+const hintVersion = 8
 
 func hintVersionPath() string { return filepath.Join(RepoGuideDir(), "hints_version") }
 
@@ -60,6 +60,7 @@ func AgentInstructionBriefFor(repoID string) string {
 		"For a repository code task, make one lightweight RepoGuide routing call before broad search or implementation if you have not already done so for the current task in this session.\n\n" +
 		"Call:\n\n" +
 		"`repoguide_get_repo_experience({ \"task\": \"<copy the user's latest request exactly>\", \"repo_id\": \"" + repoID + "\" })`\n\n" +
+		"Your client may expose this MCP tool under a prefix (`mcp__repoguide__repoguide_get_repo_experience`, or `mcp__plugin_repoguide_repoguide__repoguide_get_repo_experience` when installed as a plugin) and may not have loaded its schema yet. Not seeing it in your tool list means load it, not that this instruction is stale.\n\n" +
 		"Skip only when the request is clearly not about repository code, or when the user explicitly says not to use RepoGuide.\n\n" +
 		"Default to one repoguide_get_repo_experience call per task/session. Do not repeat it on every user message or turn. Call again only when the task changes materially, the first route proves wrong, or the RepoGuide response explicitly requests necessary follow-up detail.\n\n" +
 		"The default response is compact: task-to-topic match plus selected behavioral evidence. Call `repoguide_get_full_topic_context` only when that package is insufficient.\n\n" +
