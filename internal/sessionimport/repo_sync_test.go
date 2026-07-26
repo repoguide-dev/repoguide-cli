@@ -484,3 +484,27 @@ func TestSafeHintFilePathStaysInRepoAndAllowsOnlyTextMarkdown(t *testing.T) {
 		}
 	}
 }
+
+func TestIsAllowedBackendRequestPath(t *testing.T) {
+	// Every path the CloudClient actually builds must be allowed.
+	allowed := []string{
+		"/version", "/api/limits", "/api/auth/me", "/api/auth/refresh",
+		"/api/repos", "/api/repos/abc", "/api/repos/abc/events/",
+		"/api/repos/abc/mcp-calls", "/api/repos/abc/mcp/topics",
+		"/api/repos/abc/mcp/topics/t1", "/api/repos/abc/mcp/understand-task",
+		"/api/repos/abc/mcp/feedback", "/api/repos/abc/mcp/search",
+		"/api/teams", "/api/teams/join", "/api/teams/t1",
+		"/api/teams/t1/repos", "/api/teams/t1/members", "/api/teams/t1/invites",
+		"/api/teams/t1/repos/r1/merge", "/api/teams/t1/repos/r1/connect",
+	}
+	for _, p := range allowed {
+		if !isAllowedBackendRequestPath(p) {
+			t.Errorf("%s should be allowed", p)
+		}
+	}
+	for _, p := range []string{"/", "/admin", "/api/teams/", "/api/admin/users", "/api/repos/abc/secrets", "/api/teams/t1/invites/i1"} {
+		if isAllowedBackendRequestPath(p) {
+			t.Errorf("%s should be rejected", p)
+		}
+	}
+}

@@ -139,8 +139,8 @@ func isAllowedBackendRequestPath(path string) bool {
 			return false
 		}
 		return len(parts) == 1 ||
-			(len(parts) == 2 && (parts[1] == "repos" || parts[1] == "members")) ||
-			(len(parts) == 4 && parts[1] == "repos" && parts[3] == "merge")
+			(len(parts) == 2 && (parts[1] == "repos" || parts[1] == "members" || parts[1] == "invites")) ||
+			(len(parts) == 4 && parts[1] == "repos" && (parts[3] == "merge" || parts[3] == "connect"))
 	}
 	if !strings.HasPrefix(path, "/api/repos/") {
 		return false
