@@ -36,6 +36,7 @@ var root = &cobra.Command{
 	Aliases: []string{"rgd"},
 	Short:   rootShortDescription(),
 	Long:    rootLongDescription(),
+	Version: Version,
 }
 
 func rootShortDescription() string {
