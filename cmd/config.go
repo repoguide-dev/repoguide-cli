@@ -14,6 +14,7 @@ import (
 	clientauth "github.com/repoguide/repoguide-cli/internal/auth"
 	"github.com/repoguide/repoguide-cli/internal/config"
 	repopkg "github.com/repoguide/repoguide-cli/internal/repo"
+	"github.com/repoguide/repoguide-cli/internal/sessionimport"
 	"github.com/spf13/cobra"
 )
 
@@ -23,6 +24,7 @@ func init() {
 	repoConfigCmd.Flags().Bool("disable-hooks", false, "Disable managed commit hooks for this repo")
 	repoConfigCmd.Flags().Bool("auto-feedback", false, "Submit end-of-session feedback automatically, without asking")
 	repoConfigCmd.Flags().Bool("no-auto-feedback", false, "Ask before submitting end-of-session feedback (default)")
+	repoConfigCmd.Flags().String("branch", "", "Branch RepoGuide filters repo-experience/topic file paths against (default: main)")
 	repoCmd.AddCommand(repoConfigCmd)
 }
 
@@ -38,6 +40,7 @@ func runRepoConfig(cmd *cobra.Command, _ []string) error {
 	disableHooks, _ := cmd.Flags().GetBool("disable-hooks")
 	autoFeedback, _ := cmd.Flags().GetBool("auto-feedback")
 	noAutoFeedback, _ := cmd.Flags().GetBool("no-auto-feedback")
+	branch, _ := cmd.Flags().GetString("branch")
 	if del {
 		return runRemove(cmd, nil)
 	}
@@ -60,6 +63,12 @@ func runRepoConfig(cmd *cobra.Command, _ []string) error {
 	}
 
 	status := repopkg.DetectLocalSetup()
+	if branch != "" {
+		if !status.InGitRepo || !status.Initialized {
+			return fmt.Errorf("no initialized repoguide repo in the current directory")
+		}
+		return runSetRepoBranch(status, branch)
+	}
 	if (enableHooks || disableHooks) && (!status.InGitRepo || !status.Initialized) {
 		return fmt.Errorf("no initialized repoguide repo in the current directory")
 	}
@@ -520,6 +529,36 @@ func printConfigStatus(status repopkg.LocalSetupStatus) {
 	} else {
 		fmt.Println("  Feedback: asks before submitting (--auto-feedback to change)")
 	}
+	fmt.Printf("  Branch:   %s (--branch to change)\n", branchOrDefault(repoCfg.Branch))
+}
+
+func branchOrDefault(branch string) string {
+	if branch == "" {
+		return "main"
+	}
+	return branch
+}
+
+// runSetRepoBranch sets the branch RepoGuide filters repo-experience/topic
+// file paths against. Online-mode repos treat the cloud setting as
+// authoritative (see repo_handlers.go PATCH /api/repos/{id}/settings) and
+// cache the value locally; local-mode (no-cloud) repos only have the local
+// cache to write to.
+func runSetRepoBranch(status repopkg.LocalSetupStatus, branch string) error {
+	if !status.IsLocalMode {
+		token, _ := clientauth.Load()
+		client := sessionimport.CloudClient{BaseURL: getBackendURL(), Token: token.Token}
+		if err := client.UpdateRepoBranch(status.RepoID, branch); err != nil {
+			return fmt.Errorf("update repo branch: %w", err)
+		}
+	}
+	cfg, _ := internal.LoadRepoConfigFile(status.StoreDir)
+	cfg.Branch = branch
+	if err := internal.SaveRepoConfigFile(status.StoreDir, cfg); err != nil {
+		return err
+	}
+	fmt.Printf("Branch set to %q.\n", branch)
+	return nil
 }
 
 func maskKey(key string) string {
@@ -552,6 +591,7 @@ func printOnlineModeStatus(status repopkg.LocalSetupStatus) {
 	} else {
 		fmt.Println("  Last sync: never")
 	}
+	fmt.Printf("  Branch:    %s (--branch to change)\n", branchOrDefault(cfg.Branch))
 	fmt.Println()
 	fmt.Println("  To switch to offline mode: repoguide repo init --offline --force")
 }

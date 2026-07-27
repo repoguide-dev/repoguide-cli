@@ -72,16 +72,21 @@ type RepoCommitHooksConfig struct {
 }
 
 type RepoConfig struct {
-	Version        int                   `json:"version"`
-	RepoID         string                `json:"repoId"`
-	RepoRoot       string                `json:"repoRoot"`
-	InitializedAt  string                `json:"initializedAt"`
-	Mode           string                `json:"mode,omitempty"` // "local" or "online"
-	TeamID         string                `json:"teamId,omitempty"`
-	LocalAIBackend string                `json:"localAiBackend,omitempty"`
-	HintFiles      []string              `json:"hintFiles,omitempty"`
-	CommitHooks    RepoCommitHooksConfig `json:"commitHooks,omitempty"`
-	LastSyncedAt   *time.Time            `json:"lastSyncedAt,omitempty"`
+	Version        int    `json:"version"`
+	RepoID         string `json:"repoId"`
+	RepoRoot       string `json:"repoRoot"`
+	InitializedAt  string `json:"initializedAt"`
+	Mode           string `json:"mode,omitempty"` // "local" or "online"
+	TeamID         string `json:"teamId,omitempty"`
+	LocalAIBackend string `json:"localAiBackend,omitempty"`
+	// Branch is the branch RepoGuide filters repo-experience/topic file paths
+	// against. For online-mode repos this is a cache of the cloud-authoritative
+	// setting (see CloudClient.UpdateRepoBranch); for local-mode repos (no
+	// cloud) it's the only copy. Empty means "main".
+	Branch       string                `json:"branch,omitempty"`
+	HintFiles    []string              `json:"hintFiles,omitempty"`
+	CommitHooks  RepoCommitHooksConfig `json:"commitHooks,omitempty"`
+	LastSyncedAt *time.Time            `json:"lastSyncedAt,omitempty"`
 }
 
 // hintFileCandidates are the well-known repo guidance files RepoGuide can read.
@@ -431,6 +436,31 @@ func gitOutput(args ...string) (string, error) {
 
 func gitOutputAt(repoRoot string, args ...string) (string, error) {
 	return gitOutput(append([]string{"-C", repoRoot}, args...)...)
+}
+
+// KnownFilesForBranch lists every file that exists on branch in repoRoot, so
+// callers can filter stale (renamed/moved/deleted) paths out of learned
+// topic/session data. Falls back to origin/<branch> if the local ref doesn't
+// resolve (e.g. a fresh clone with a different branch checked out). Returns
+// nil - "unknown, don't filter" - rather than an error, since this is always
+// a best-effort enrichment, never a required input.
+func KnownFilesForBranch(repoRoot, branch string) []string {
+	branch = strings.TrimSpace(branch)
+	if repoRoot == "" || branch == "" {
+		return nil
+	}
+	ref := branch
+	if _, err := gitOutputAt(repoRoot, "rev-parse", "--verify", "--quiet", ref); err != nil {
+		ref = "origin/" + branch
+		if _, err := gitOutputAt(repoRoot, "rev-parse", "--verify", "--quiet", ref); err != nil {
+			return nil
+		}
+	}
+	out, err := gitOutputAt(repoRoot, "ls-tree", "-r", "--name-only", ref)
+	if err != nil || out == "" {
+		return nil
+	}
+	return strings.Split(out, "\n")
 }
 
 // listConfiguredRepos and normalizePathForCompare are duplicated here (from

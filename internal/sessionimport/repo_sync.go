@@ -229,6 +229,31 @@ func (c CloudClient) GetRepo(repoID string) (*RepoInfo, error) {
 	return &info, nil
 }
 
+func (c CloudClient) UpdateRepoBranch(repoID, branch string) error {
+	if strings.TrimSpace(c.Token) == "" || strings.TrimSpace(c.BaseURL) == "" {
+		return nil
+	}
+	body, err := json.Marshal(map[string]string{"branch": branch})
+	if err != nil {
+		return err
+	}
+	req, err := c.newRequest(http.MethodPatch, "/api/repos/"+url.PathEscape(repoID)+"/settings", bytes.NewReader(body))
+	if err != nil {
+		return err
+	}
+	req.Header.Set("Authorization", "Bearer "+c.Token)
+	req.Header.Set("Content-Type", "application/json")
+	resp, err := c.httpClient().Do(req)
+	if err != nil {
+		return err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode >= 300 {
+		return backendRequestError("backend update repo branch failed", resp)
+	}
+	return nil
+}
+
 func (c CloudClient) RegisterRepo(repoID, repoRoot string) error {
 	if strings.TrimSpace(c.Token) == "" || strings.TrimSpace(c.BaseURL) == "" {
 		return nil
@@ -1242,14 +1267,14 @@ func (c CloudClient) GetMCPTopicContext(repoID, topicID string) (*MCPTopicContex
 
 type MCPUnderstandTaskResult = contracts.MCPUnderstandTaskResult
 
-func (c CloudClient) GetMCPUnderstandTask(repoID, task, topicID string, prompts []string) (*MCPUnderstandTaskResult, error) {
+func (c CloudClient) GetMCPUnderstandTask(repoID, task, topicID string, prompts []string, knownFiles []string) (*MCPUnderstandTaskResult, error) {
 	if c.shouldUseLocal(repoID) {
-		return c.localGetMCPUnderstandTask(repoID, task, topicID, prompts)
+		return c.localGetMCPUnderstandTask(repoID, task, topicID, prompts, knownFiles)
 	}
 	if strings.TrimSpace(c.Token) == "" || strings.TrimSpace(c.BaseURL) == "" {
 		return nil, nil
 	}
-	body, _ := json.Marshal(contracts.MCPUnderstandTaskRequest{Task: task, TopicID: topicID, Prompts: prompts})
+	body, _ := json.Marshal(contracts.MCPUnderstandTaskRequest{Task: task, TopicID: topicID, Prompts: prompts, KnownFiles: knownFiles})
 	req, err := c.newRequest(http.MethodPost, "/api/repos/"+url.PathEscape(repoID)+"/mcp/understand-task", bytes.NewReader(body))
 	if err != nil {
 		return nil, err
@@ -1456,7 +1481,7 @@ func (c CloudClient) localGetMCPSearchContext(repoID, topicID, _ string) (*MCPSe
 	return jsonRoundTrip[model.BundleSearchData, MCPSearchContext](*sc)
 }
 
-func (c CloudClient) localGetMCPUnderstandTask(repoID, task, topicID string, prompts []string) (*MCPUnderstandTaskResult, error) {
+func (c CloudClient) localGetMCPUnderstandTask(repoID, task, topicID string, prompts []string, knownFiles []string) (*MCPUnderstandTaskResult, error) {
 	svc := c.localSvc
 	if c.localSvcFactory != nil {
 		if scoped := c.localSvcFactory(repoID); scoped != nil {
@@ -1466,7 +1491,7 @@ func (c CloudClient) localGetMCPUnderstandTask(repoID, task, topicID string, pro
 	if svc == nil {
 		return nil, fmt.Errorf("local services not configured")
 	}
-	out, err := svc.MCP.UnderstandTask(context.Background(), repoID, task, topicID, prompts)
+	out, err := svc.MCP.UnderstandTask(context.Background(), repoID, task, topicID, prompts, knownFiles)
 	if err != nil || out == nil {
 		return nil, err
 	}

@@ -27,6 +27,10 @@ func gitOutputAt(repoRoot string, args ...string) (string, error) {
 	return internalpkg.GitOutputAt(repoRoot, args...)
 }
 
+func knownFilesForBranch(repoRoot, branch string) []string {
+	return internalpkg.KnownFilesForBranch(repoRoot, branch)
+}
+
 func writeJSON(path string, value any) error { return internalpkg.WriteJSON(path, value) }
 
 func RepoGuideDir() string { return repo.RepoGuideDir() }
@@ -49,6 +53,10 @@ func InitRepo(opts InitOptions) (InitResult, error) { return internalpkg.InitRep
 
 func LoadRepoConfigFile(storeDir string) (RepoConfig, error) {
 	return internalpkg.LoadRepoConfigFile(storeDir)
+}
+
+func SaveRepoConfigFile(storeDir string, cfg RepoConfig) error {
+	return internalpkg.SaveRepoConfigFile(storeDir, cfg)
 }
 
 func commitHooksEnabled(cfg RepoConfig) bool { return internalpkg.CommitHooksEnabled(cfg) }

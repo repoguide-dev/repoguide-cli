@@ -60,7 +60,9 @@ func (s *MCPService) GetSearchContext(ctx context.Context, repoID, topicID strin
 }
 
 // UnderstandTask routes a task description to the best topic using AI.
-func (s *MCPService) UnderstandTask(ctx context.Context, repoID, task, topicID string, sessionPrompts []string) (*UnderstandTaskOutput, error) {
+// knownFiles, when set, restricts surfaced file paths to those the caller
+// confirmed exist on its configured branch (see contracts.MCPUnderstandTaskRequest.KnownFiles).
+func (s *MCPService) UnderstandTask(ctx context.Context, repoID, task, topicID string, sessionPrompts []string, knownFiles []string) (*UnderstandTaskOutput, error) {
 	repoCtxEntry, _ := s.store.Topics().GetRepoContext(ctx, repoID)
 	repoCtx := ""
 	if repoCtxEntry != nil {
@@ -85,7 +87,7 @@ func (s *MCPService) UnderstandTask(ctx context.Context, repoID, task, topicID s
 		if chosen == nil {
 			return nil, fmt.Errorf("topic %q not found", topicID)
 		}
-		return s.buildTaskOutput(ctx, repoID, task, *chosen, 0, 1, feedback, "Task-to-topic match: "+chosen.Name+" (selected by caller)"), nil
+		return s.buildTaskOutput(ctx, repoID, task, *chosen, 0, 1, feedback, "Task-to-topic match: "+chosen.Name+" (selected by caller)", knownFiles), nil
 	}
 
 	// First call: select topic.
@@ -109,18 +111,19 @@ func (s *MCPService) UnderstandTask(ctx context.Context, repoID, task, topicID s
 	}
 	matchCount := plausibleMatchCount(result.CandidateTopics)
 	explanation := fmt.Sprintf("Task-to-topic match: %.0f%% %s", result.Confidence*100, chosen.Name)
-	return s.buildTaskOutput(ctx, repoID, task, *chosen, result.Confidence, matchCount, feedback, explanation), nil
+	return s.buildTaskOutput(ctx, repoID, task, *chosen, result.Confidence, matchCount, feedback, explanation, knownFiles), nil
 }
 
 // ── Render helpers ────────────────────────────────────────────────────────────
 
-func (s *MCPService) buildTaskOutput(ctx context.Context, repoID, task string, topic model.TopicContext, confidence float64, matchCount int, feedback []model.MCPFeedback, explanation string) *UnderstandTaskOutput {
+func (s *MCPService) buildTaskOutput(ctx context.Context, repoID, task string, topic model.TopicContext, confidence float64, matchCount int, feedback []model.MCPFeedback, explanation string, knownFiles []string) *UnderstandTaskOutput {
 	repoRoot := ""
 	if repo, _ := s.store.Repos().Get(ctx, repoID); repo != nil {
 		repoRoot = repo.RepoRoot
 	}
 	sessions, _ := s.store.Events().Get(ctx, repoID)
 	pkg := experience.BuildTaskPackage(task, repoRoot, topic, sessions)
+	pkg = experience.FilterTaskPackageFiles(pkg, knownFilesSet(knownFiles))
 	pkg = experience.SetSelectionBudget(pkg, matchCount)
 	topicFeedback := experience.FeedbackForTopic(topic.ID, feedback)
 	pkg = experience.ApplyAdviceFeedback(pkg, topicFeedback)
@@ -135,6 +138,17 @@ func (s *MCPService) buildTaskOutput(ctx context.Context, repoID, task string, t
 		ContextText: experience.RenderTaskPackage(topic, pkg), Explanation: explanation,
 		SelectedAdvice: pkg.SelectedAdvice,
 	}
+}
+
+func knownFilesSet(files []string) map[string]bool {
+	if files == nil {
+		return nil
+	}
+	set := make(map[string]bool, len(files))
+	for _, f := range files {
+		set[f] = true
+	}
+	return set
 }
 
 func findTopic(topics []model.TopicContext, topicID string) *model.TopicContext {

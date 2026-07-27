@@ -455,6 +455,91 @@ func resolveRepoContext(repoID, repoPath string) (string, string) {
 	return repoID, repoPath
 }
 
+// ResolveKnownFiles returns every file that exists on repoID's configured
+// branch, for filtering stale (renamed/moved/deleted) paths out of learned
+// topic/session data. The branch itself is cloud-authoritative for
+// online-mode repos (see CloudClient.UpdateRepoBranch / `repoguide repo
+// config --branch`); the local repo.json cache is checked first to avoid a
+// network round trip on every call, and refreshed from the cloud when empty.
+// Returns nil ("unknown, don't filter") if repoID/repoPath aren't resolvable
+// or the branch can't be determined - this is always best-effort.
+func ResolveKnownFiles(repoID, repoPath string, client *CloudClient) []string {
+	if repoID == "" || repoPath == "" {
+		return nil
+	}
+	storeDir := filepath.Join(RepoGuideDir(), "repos", repoID)
+	cfg, _ := LoadRepoConfigFile(storeDir)
+	branch := cfg.Branch
+	if branch == "" && client != nil {
+		if info, err := client.GetRepo(repoID); err == nil && info != nil && info.Branch != "" {
+			branch = info.Branch
+			cfg.Branch = branch
+			_ = SaveRepoConfigFile(storeDir, cfg)
+		}
+	}
+	if branch == "" {
+		branch = "main"
+	}
+	return knownFilesForBranch(repoPath, branch)
+}
+
+// filterKnownTopicContext trims every file-path field on ctx down to paths
+// present in known, mirroring repoguide-core's experience.FilterTopicToKnownFiles
+// for the wire-shaped MCPTopicContext (a distinct type from model.TopicContext -
+// see contracts/v1/backend_api.go). known == nil skips filtering.
+func filterKnownTopicContext(ctx *MCPTopicContext, known map[string]bool) {
+	if ctx == nil || known == nil {
+		return
+	}
+	startHere := make([]contracts.MCPTopicStartFile, 0, len(ctx.StartHere))
+	for _, f := range ctx.StartHere {
+		if known[f.Path] {
+			startHere = append(startHere, f)
+		}
+	}
+	ctx.StartHere = startHere
+	ctx.ImportantFiles.EditTargets = filterKnownPaths(ctx.ImportantFiles.EditTargets, known)
+	ctx.ImportantFiles.ReferenceFiles = filterKnownPaths(ctx.ImportantFiles.ReferenceFiles, known)
+	ctx.ImportantFiles.TestFiles = filterKnownPaths(ctx.ImportantFiles.TestFiles, known)
+	ctx.ImportantFiles.CrossCuttingFiles = filterKnownPaths(ctx.ImportantFiles.CrossCuttingFiles, known)
+	ctx.Tests.StartWith = filterKnownPaths(ctx.Tests.StartWith, known)
+	filterGuidanceItemFiles(ctx.ScopeBoundaries, known)
+	filterGuidanceItemFiles(ctx.KnownWorkflows, known)
+	filterGuidanceItemFiles(ctx.AvoidWastingTime, known)
+	filterGuidanceItemFiles(ctx.RiskFlags, known)
+	filterGuidanceItemFiles(ctx.Tests.Notes, known)
+}
+
+func knownFilesSet(files []string) map[string]bool {
+	if files == nil {
+		return nil
+	}
+	set := make(map[string]bool, len(files))
+	for _, f := range files {
+		set[f] = true
+	}
+	return set
+}
+
+func filterKnownPaths(paths []string, known map[string]bool) []string {
+	if len(paths) == 0 {
+		return paths
+	}
+	out := make([]string, 0, len(paths))
+	for _, p := range paths {
+		if known[p] {
+			out = append(out, p)
+		}
+	}
+	return out
+}
+
+func filterGuidanceItemFiles(items []contracts.MCPTopicGuidanceItem, known map[string]bool) {
+	for i := range items {
+		items[i].Files = filterKnownPaths(items[i].Files, known)
+	}
+}
+
 // callMCPTool executes the named tool. Returns result, a pre-created callID (non-empty means
 // the caller should skip the generic CreateMCPCall), and any error.
 func callMCPTool(name string, arguments map[string]any, client *CloudClient) (map[string]any, string, error) {
@@ -483,7 +568,7 @@ func callMCPTool(name string, arguments map[string]any, client *CloudClient) (ma
 		if err := decodeToolArguments(arguments, &input); err != nil {
 			return nil, "", err
 		}
-		repoID, _ := resolveRepoContext(input.RepoID, "")
+		repoID, repoPath := resolveRepoContext(input.RepoID, "")
 		if repoID == "" {
 			return nil, "", fmt.Errorf("repo_id required")
 		}
@@ -491,6 +576,7 @@ func callMCPTool(name string, arguments map[string]any, client *CloudClient) (ma
 		if err != nil || ctx == nil {
 			return nil, "", fmt.Errorf("topic not found")
 		}
+		filterKnownTopicContext(ctx, knownFilesSet(ResolveKnownFiles(repoID, repoPath, client)))
 		return map[string]any{
 			"text": renderTestContext(ctx, input.Files),
 		}, "", nil
@@ -515,7 +601,7 @@ func callMCPTool(name string, arguments map[string]any, client *CloudClient) (ma
 		if err := decodeToolArguments(arguments, &input); err != nil {
 			return nil, "", err
 		}
-		repoID, _ := resolveRepoContext(input.RepoID, "")
+		repoID, repoPath := resolveRepoContext(input.RepoID, "")
 		if repoID == "" || input.TopicID == "" {
 			return nil, "", fmt.Errorf("repo_id and topic_id required")
 		}
@@ -523,6 +609,7 @@ func callMCPTool(name string, arguments map[string]any, client *CloudClient) (ma
 		if err != nil || topic == nil {
 			return nil, "", fmt.Errorf("topic not found")
 		}
+		filterKnownTopicContext(topic, knownFilesSet(ResolveKnownFiles(repoID, repoPath, client)))
 		search, _ := client.GetMCPSearchContext(repoID, input.TopicID, "")
 		return map[string]any{"text": renderFullTopicContext(topic, search), "topic_id": input.TopicID}, "", nil
 	case "repoguide_get_repo_experience":
@@ -530,12 +617,13 @@ func callMCPTool(name string, arguments map[string]any, client *CloudClient) (ma
 		if err := decodeToolArguments(arguments, &input); err != nil {
 			return nil, "", err
 		}
-		repoID, _ := resolveRepoContext(input.RepoID, "")
+		repoID, repoPath := resolveRepoContext(input.RepoID, "")
 		if repoID == "" {
 			return map[string]any{"text": UnderstandTaskResponse("")}, "", nil
 		}
 		sessionPrompts := extractCurrentSessionPrompts(client.SessionID)
-		result, err := client.GetMCPUnderstandTask(repoID, input.Task, input.TopicID, sessionPrompts)
+		knownFiles := ResolveKnownFiles(repoID, repoPath, client)
+		result, err := client.GetMCPUnderstandTask(repoID, input.Task, input.TopicID, sessionPrompts, knownFiles)
 		if err != nil {
 			return nil, "", fmt.Errorf("understand-task failed: %w", err)
 		}

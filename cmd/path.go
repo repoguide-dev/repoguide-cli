@@ -47,7 +47,8 @@ func runPath(cmd *cobra.Command, _ []string) error {
 	token, _ := clientauth.Load()
 	client := sessionimport.CloudClient{BaseURL: getBackendURL(), Token: token.Token}
 
-	result, err := client.GetMCPUnderstandTask(status.RepoID, task, "", nil)
+	knownFiles := mcpinternal.ResolveKnownFiles(status.RepoID, status.RepoRoot, &client)
+	result, err := client.GetMCPUnderstandTask(status.RepoID, task, "", nil, knownFiles)
 	if err != nil {
 		return fmt.Errorf("understand-task: %w", err)
 	}
@@ -72,7 +73,7 @@ func runPath(cmd *cobra.Command, _ []string) error {
 		if err != nil || chosen == "" {
 			return err
 		}
-		result, err = client.GetMCPUnderstandTask(status.RepoID, task, chosen, nil)
+		result, err = client.GetMCPUnderstandTask(status.RepoID, task, chosen, nil, knownFiles)
 		if err != nil {
 			return fmt.Errorf("understand-task: %w", err)
 		}
