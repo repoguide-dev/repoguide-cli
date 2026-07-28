@@ -65,3 +65,26 @@ func TestClassifyRepoGuideResult(t *testing.T) {
 		}
 	}
 }
+
+// Codex reports cached_input_tokens as a subset of input_tokens. Left as-is,
+// estimateCostUSD bills those tokens at the full input rate and again at the
+// cache rate — locally that overstated Codex spend by 5.4x.
+func TestCodexTokenUsageExcludesCachedInput(t *testing.T) {
+	raw := `{"last_token_usage":{"input_tokens":18934,"cached_input_tokens":10496,"output_tokens":137}}`
+	got := parseCodexTokenUsage([]byte(raw))
+	if got == nil {
+		t.Fatal("expected usage")
+	}
+	if got.InputTokens != 8438 {
+		t.Errorf("InputTokens = %d, want 8438 (18934 - 10496)", got.InputTokens)
+	}
+	if got.CacheReadTokens != 10496 {
+		t.Errorf("CacheReadTokens = %d, want 10496", got.CacheReadTokens)
+	}
+}
+
+func TestUncachedInputClampsAtZero(t *testing.T) {
+	if got := uncachedInput(100, 500); got != 0 {
+		t.Errorf("cached > input must clamp to 0, got %d", got)
+	}
+}

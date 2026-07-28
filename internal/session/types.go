@@ -60,6 +60,15 @@ type SessionEvent struct {
 	Metadata     map[string]string `json:"metadata,omitempty"`
 }
 
+// TokenUsage carries one invariant that every parser must uphold:
+// InputTokens counts only uncached input, with CacheReadTokens and
+// CacheWriteTokens disjoint from it and from each other. estimateCostUSD
+// prices all three additively, so a parser that leaves cached tokens inside
+// InputTokens bills them twice — once at the full input rate — and inflates
+// both cost and any tokens-per-session figure derived from it.
+//
+// Providers disagree here: Anthropic reports input exclusive of cache, OpenAI
+// reports input inclusive of cached_input_tokens. Normalize at parse time.
 type TokenUsage struct {
 	InputTokens      int64 `json:"inputTokens"`
 	OutputTokens     int64 `json:"outputTokens"`

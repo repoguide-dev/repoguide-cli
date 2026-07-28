@@ -54,7 +54,10 @@ func TestBuildSessionArtifactsCodex(t *testing.T) {
 	if artifacts.Analysis.Metrics.EditedFileCount != 1 || artifacts.Analysis.Metrics.EditedFiles[0] != "cli/main.go" {
 		t.Fatalf("unexpected edited files: %#v", artifacts.Analysis.Metrics.EditedFiles)
 	}
-	if artifacts.Analysis.Metrics.TokenUsage == nil || artifacts.Analysis.Metrics.TokenUsage.InputTokens != 100 {
+	// The fixture reports input_tokens:100 with cached_input_tokens:30, and
+	// Codex counts cached inside input. InputTokens must hold only the 70
+	// uncached tokens so estimateCostUSD doesn't bill the cached 30 twice.
+	if usage := artifacts.Analysis.Metrics.TokenUsage; usage == nil || usage.InputTokens != 70 || usage.CacheReadTokens != 30 {
 		t.Fatalf("unexpected token usage: %#v", artifacts.Analysis.Metrics.TokenUsage)
 	}
 	if len(artifacts.Analysis.Metrics.PromptBlocks) != 1 {
@@ -64,7 +67,7 @@ func TestBuildSessionArtifactsCodex(t *testing.T) {
 	if blockUsage == nil {
 		t.Fatal("expected prompt block token usage")
 	}
-	if blockUsage.InputTokens != 100 || blockUsage.CacheReadTokens != 30 || blockUsage.OutputTokens != 20 {
+	if blockUsage.InputTokens != 70 || blockUsage.CacheReadTokens != 30 || blockUsage.OutputTokens != 20 {
 		t.Fatalf("unexpected prompt block token usage: %#v", blockUsage)
 	}
 	cached, err := BuildSessionArtifacts(session)

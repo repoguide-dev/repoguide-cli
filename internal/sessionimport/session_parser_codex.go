@@ -241,7 +241,7 @@ func parseCodexTokenUsage(info json.RawMessage) *TokenUsage {
 	}
 	if payload.Last.InputTokens > 0 || payload.Last.CachedInput > 0 || payload.Last.OutputTokens > 0 {
 		return &TokenUsage{
-			InputTokens:     payload.Last.InputTokens,
+			InputTokens:     uncachedInput(payload.Last.InputTokens, payload.Last.CachedInput),
 			OutputTokens:    payload.Last.OutputTokens,
 			CacheReadTokens: payload.Last.CachedInput,
 			Cumulative:      false,
@@ -251,11 +251,26 @@ func parseCodexTokenUsage(info json.RawMessage) *TokenUsage {
 		return nil
 	}
 	return &TokenUsage{
-		InputTokens:     payload.Total.InputTokens,
+		InputTokens:     uncachedInput(payload.Total.InputTokens, payload.Total.CachedInput),
 		OutputTokens:    payload.Total.OutputTokens,
 		CacheReadTokens: payload.Total.CachedInput,
 		Cumulative:      true,
 	}
+}
+
+// uncachedInput converts OpenAI's cache-inclusive input_tokens to the
+// cache-exclusive form TokenUsage requires. Codex reports
+// cached_input_tokens as a subset of input_tokens, so leaving the total in
+// place charges every cached token at the full input rate and again at the
+// cache rate.
+//
+// Clamped at zero: a provider that ever reports cached > input would
+// otherwise produce negative tokens and a negative cost.
+func uncachedInput(input, cached int64) int64 {
+	if cached >= input {
+		return 0
+	}
+	return input - cached
 }
 
 func parseCodexShellArguments(raw string) ([]string, string, []string, []string) {
