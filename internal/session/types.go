@@ -129,6 +129,9 @@ type SessionMetrics struct {
 	ExplorationStats      *ExplorationStats `json:"explorationStats,omitempty"`
 	FailureStats          *FailureStats     `json:"failureStats,omitempty"`
 	EstimatedCostUSD      float64           `json:"estimatedCostUsd,omitempty"`
+	// RepoGuide is derived from the event log rather than the summary parsers,
+	// which disagree on how thoroughly they inspect tool results.
+	RepoGuide RepoGuideCohort `json:"repoGuide,omitzero"`
 }
 
 type FailureStats struct {

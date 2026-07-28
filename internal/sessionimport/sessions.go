@@ -665,6 +665,13 @@ func entryFromSession(session SessionSummary, info os.FileInfo) sessionIndexEntr
 		entry.CostUSD = cached.Analysis.Metrics.EstimatedCostUSD
 		entry.ReadFileCount = cached.Analysis.Metrics.ReadFileCount
 		entry.EditFileCount = cached.Analysis.Metrics.EditedFileCount
+		// The event log inspects tool results for every agent, while the
+		// summary parsers vary — five of seven infer "used RepoGuide" from the
+		// tool name alone and would file a held-out session as treated. Prefer
+		// the analysis wherever one exists.
+		cohort := cached.Analysis.Metrics.RepoGuide
+		entry.UsedRepoGuide = cohort.Used
+		entry.RepoGuideHoldout = cohort.Holdout
 	}
 	return entry
 }

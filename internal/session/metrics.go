@@ -12,6 +12,7 @@ func AnalyzeSessionEventLog(eventLog SessionEventLog) SessionMetrics {
 	editCounts := map[string]int{}
 	metrics := SessionMetrics{
 		EventCount: len(eventLog.Events),
+		RepoGuide:  classifyRepoGuideEvents(eventLog.Events),
 	}
 
 	var cumulativeUsage *TokenUsage
