@@ -76,7 +76,7 @@ func redactEvents(events []SessionEvent) {
 }
 
 const (
-	sessionEventLogVersion  = 6
+	sessionEventLogVersion  = 7
 	sessionEventLogFileName = "events.json"
 	sessionAnalysisFileName = "analysis.json"
 )

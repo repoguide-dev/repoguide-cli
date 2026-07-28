@@ -4,6 +4,8 @@ import (
 	"bufio"
 	"encoding/json"
 	"os"
+	"sort"
+	"strings"
 )
 
 func buildCodexSessionEvents(path string) ([]SessionEvent, error) {
@@ -150,6 +152,13 @@ func buildCodexSessionEvents(path string) ([]SessionEvent, error) {
 						TokenUsage: usage,
 					})
 				}
+			case "patch_apply_end":
+				// Current Codex applies edits through a native patch tool rather than a
+				// shell apply_patch heredoc, so the unified diffs here are the only
+				// authoritative record of which files changed and by how many lines.
+				if event, ok := parseCodexPatchApply(raw.Payload, raw.Timestamp); ok {
+					events = append(events, event)
+				}
 			}
 		}
 	}
@@ -158,6 +167,60 @@ func buildCodexSessionEvents(path string) ([]SessionEvent, error) {
 	}
 	numberSessionEvents(events)
 	return events, nil
+}
+
+// parseCodexPatchApply turns a patch_apply_end payload into a single edit event
+// carrying every file the patch touched and the diff's line counts. Failed
+// patches are dropped: nothing changed on disk, so they aren't edits.
+func parseCodexPatchApply(raw json.RawMessage, timestamp string) (SessionEvent, bool) {
+	var payload struct {
+		CallID  string `json:"call_id"`
+		Success bool   `json:"success"`
+		Changes map[string]struct {
+			UnifiedDiff string `json:"unified_diff"`
+		} `json:"changes"`
+	}
+	if err := json.Unmarshal(raw, &payload); err != nil || !payload.Success || len(payload.Changes) == 0 {
+		return SessionEvent{}, false
+	}
+	event := SessionEvent{
+		Kind:       "patch_apply",
+		Timestamp:  timestamp,
+		ToolName:   "apply_patch",
+		ToolCallID: payload.CallID,
+	}
+	writes := make([]string, 0, len(payload.Changes))
+	for path, change := range payload.Changes {
+		if strings.TrimSpace(path) == "" {
+			continue
+		}
+		writes = append(writes, path)
+		added, removed := countUnifiedDiffLines(change.UnifiedDiff)
+		event.LinesAdded += added
+		event.LinesRemoved += removed
+	}
+	if len(writes) == 0 {
+		return SessionEvent{}, false
+	}
+	sort.Strings(writes)
+	event.WritePaths = writes
+	return event, true
+}
+
+// countUnifiedDiffLines counts +/- lines in a unified diff body, skipping the
+// file and hunk headers so they aren't mistaken for content.
+func countUnifiedDiffLines(diff string) (added, removed int) {
+	for _, line := range strings.Split(diff, "\n") {
+		switch {
+		case strings.HasPrefix(line, "+++") || strings.HasPrefix(line, "---") || strings.HasPrefix(line, "@@"):
+			continue
+		case strings.HasPrefix(line, "+"):
+			added++
+		case strings.HasPrefix(line, "-"):
+			removed++
+		}
+	}
+	return added, removed
 }
 
 func parseCodexTokenUsage(info json.RawMessage) *TokenUsage {
