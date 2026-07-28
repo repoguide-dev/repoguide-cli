@@ -92,3 +92,87 @@ func TestOverviewHasNoRepoGuideComparison(t *testing.T) {
 		t.Errorf("overview must not carry a RepoGuide comparison:\n%s", out)
 	}
 }
+
+// The headline must be able to say RepoGuide cost more. A savings figure that
+// can only come out positive isn't a measurement.
+func TestSavingsCanBeNegative(t *testing.T) {
+	g := &sessionStat{}
+	fillBand(g, cohortNone, 10, 100, 1.0)      // $0.10/10 lines
+	fillBand(g, cohortRepoGuide, 10, 100, 3.0) // $0.30/10 lines
+	groups := map[string]map[string]*sessionStat{"claude": {"medium (51-250)": g}}
+
+	est, ok := estimateSavings([]string{"claude"}, groups, false)
+	if !ok {
+		t.Fatal("expected an estimate")
+	}
+	if est.usd >= 0 {
+		t.Errorf("RepoGuide costing more must yield a negative figure, got %.2f", est.usd)
+	}
+	if out := renderSavingsHeadline(est); !strings.Contains(out, "Extra cost with RepoGuide") {
+		t.Errorf("negative savings must render as extra cost:\n%s", out)
+	}
+}
+
+// Dropping thin strata means the figure can cover a fraction of the work;
+// coverage has to be stated or it reads as a total.
+func TestSavingsExcludesThinStrataAndReportsCoverage(t *testing.T) {
+	rich, thin := &sessionStat{}, &sessionStat{}
+	fillBand(rich, cohortNone, 10, 100, 2.0)
+	fillBand(rich, cohortRepoGuide, 10, 100, 1.0)
+	fillBand(thin, cohortNone, 2, 100, 2.0) // under minComparisonN
+	fillBand(thin, cohortRepoGuide, 10, 100, 1.0)
+	groups := map[string]map[string]*sessionStat{
+		"claude": {"medium (51-250)": rich, "small (1-50)": thin},
+	}
+
+	est, ok := estimateSavings([]string{"claude"}, groups, false)
+	if !ok {
+		t.Fatal("expected an estimate")
+	}
+	if est.strata != 1 {
+		t.Errorf("thin stratum must be excluded, got %d strata", est.strata)
+	}
+	if est.coveredLines >= est.totalLines {
+		t.Errorf("excluded lines must still count toward the total: %d/%d", est.coveredLines, est.totalLines)
+	}
+	if out := renderSavingsHeadline(est); !strings.Contains(out, "covers 50%") {
+		t.Errorf("partial coverage must be stated:\n%s", out)
+	}
+}
+
+// Pooling agents is what produced a fake result before; the estimator must
+// compare within an agent, never across.
+func TestSavingsStratifiesByAgent(t *testing.T) {
+	cheap, pricey := &sessionStat{}, &sessionStat{}
+	fillBand(cheap, cohortRepoGuide, 10, 100, 1.0) // no control arm at all
+	fillBand(pricey, cohortNone, 10, 100, 5.0)     // no treated arm at all
+	groups := map[string]map[string]*sessionStat{
+		"codex":  {"medium (51-250)": cheap},
+		"claude": {"medium (51-250)": pricey},
+	}
+
+	est, ok := estimateSavings([]string{"claude", "codex"}, groups, false)
+	if ok && est.strata > 0 {
+		t.Errorf("neither agent has both arms; must not borrow the other's baseline (got %.2f over %d strata)", est.usd, est.strata)
+	}
+}
+
+func TestSavingsUsesHoldoutWhenRandomized(t *testing.T) {
+	g := &sessionStat{}
+	fillBand(g, cohortHoldout, 10, 100, 2.0)
+	fillBand(g, cohortRepoGuide, 10, 100, 1.0)
+	fillBand(g, cohortNone, 40, 100, 99.0) // self-selected: must be ignored
+	groups := map[string]map[string]*sessionStat{"claude": {"medium (51-250)": g}}
+
+	est, ok := estimateSavings([]string{"claude"}, groups, true)
+	if !ok {
+		t.Fatal("expected an estimate")
+	}
+	// 10 sessions x 100 lines = 1000 lines; ($0.20 - $0.10) per 10 lines = $10.
+	if est.usd < 9.5 || est.usd > 10.5 {
+		t.Errorf("must price against the holdout arm, not the never-called one: got %.2f", est.usd)
+	}
+	if out := renderSavingsHeadline(est); !strings.Contains(out, "measured against a randomized holdout") {
+		t.Errorf("randomized estimate must say so:\n%s", out)
+	}
+}

@@ -14,9 +14,18 @@ type Config struct {
 	AutoFeedback    bool   `json:"auto_feedback,omitempty"`
 	// HoldoutPct is the percentage of sessions for which the MCP server
 	// withholds the repo-experience briefing, creating a randomized control
-	// group. 0 disables the experiment.
-	HoldoutPct int `json:"holdout_pct,omitempty"`
+	// group. A pointer so that an explicit 0 ("off") is distinguishable from
+	// an absent key ("never chosen"), which takes DefaultHoldoutPct instead.
+	HoldoutPct *int `json:"holdout_pct,omitempty"`
 }
+
+// DefaultHoldoutPct applies until the user chooses otherwise. Without a control
+// group `repoguide stats` can only compare sessions where RepoGuide was chosen
+// against ones where it wasn't, and that choice tracks task difficulty — so the
+// headline figure measures the choice as much as the tool. 20% is enough to
+// power the comparison within a few weeks of normal use while leaving four in
+// five sessions fully assisted.
+const DefaultHoldoutPct = 20
 
 // dataDirName is overridden in the local development build.
 var dataDirName = ".repoguide"
@@ -76,17 +85,28 @@ func SetAutoFeedback(v bool) error {
 	return save(c)
 }
 
-// HoldoutPct returns the configured holdout percentage, clamped to 0-100.
-// 0 means the experiment is off and every session gets its briefing.
+// HoldoutPct returns the holdout percentage, clamped to 0-100, falling back to
+// DefaultHoldoutPct when the user has never set one. 0 means every session gets
+// its briefing.
 func HoldoutPct() int {
 	v := load().HoldoutPct
-	if v < 0 {
+	if v == nil {
+		return DefaultHoldoutPct
+	}
+	switch {
+	case *v < 0:
 		return 0
-	}
-	if v > 100 {
+	case *v > 100:
 		return 100
+	default:
+		return *v
 	}
-	return v
+}
+
+// HoldoutPctExplicitlySet reports whether the user has chosen a value, letting
+// setup mention the default exactly once instead of on every run.
+func HoldoutPctExplicitlySet() bool {
+	return load().HoldoutPct != nil
 }
 
 // SetHoldoutPct saves the holdout percentage to the global config file.
@@ -95,7 +115,7 @@ func SetHoldoutPct(v int) error {
 		return fmt.Errorf("holdout must be between 0 and 100, got %d", v)
 	}
 	c := load()
-	c.HoldoutPct = v
+	c.HoldoutPct = &v
 	return save(c)
 }
 

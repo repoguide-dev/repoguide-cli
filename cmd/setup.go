@@ -13,6 +13,7 @@ import (
 	"github.com/mattn/go-isatty"
 	"github.com/repoguide/repoguide-cli/internal"
 	clientauth "github.com/repoguide/repoguide-cli/internal/auth"
+	"github.com/repoguide/repoguide-cli/internal/config"
 	repopkg "github.com/repoguide/repoguide-cli/internal/repo"
 	"github.com/repoguide/repoguide-cli/internal/sessionimport"
 	"github.com/spf13/cobra"
@@ -92,7 +93,28 @@ func runSetup(cmd *cobra.Command, _ []string) error {
 	}
 
 	_ = mcpInstallCmd.Flags().Set("no-hooks", fmt.Sprintf("%t", noHooks))
-	return runMCPInstall(mcpInstallCmd, nil)
+	if err := runMCPInstall(mcpInstallCmd, nil); err != nil {
+		return err
+	}
+	printHoldoutSetupNotice()
+	return nil
+}
+
+// printHoldoutSetupNotice announces the default holdout once, at setup. Sessions
+// that silently get no briefing would otherwise look like RepoGuide failing, so
+// the behaviour has to be stated before it is first observed — and only while
+// the default is still in force, since after that the user has chosen it.
+func printHoldoutSetupNotice() {
+	if config.HoldoutPctExplicitlySet() {
+		return
+	}
+	fmt.Println()
+	fmt.Println(renderSectionTitle("Measurement holdout"))
+	fmt.Printf("  %d%% of sessions will get no briefing, at random.\n", config.DefaultHoldoutPct)
+	fmt.Println("  Those sessions are the control group that lets `repoguide stats` report")
+	fmt.Println("  what RepoGuide actually saved, rather than comparing tasks you chose it")
+	fmt.Println("  for against tasks you didn't.")
+	fmt.Println("  Turn it off any time: repoguide repo config --holdout 0")
 }
 
 func runCILogin() error {

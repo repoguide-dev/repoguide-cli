@@ -188,6 +188,10 @@ func runStats(cmd *cobra.Command, _ []string) error {
 
 	fmt.Println(titleStyle.Render(titleText))
 	fmt.Println()
+	if est, ok := estimateSavings(agentOrder, cmpGroups, hasHoldout(cmpGroups)); ok {
+		fmt.Println(renderSavingsHeadline(est))
+		fmt.Println()
+	}
 	printOverview(&total)
 	fmt.Println()
 	printGroupTable(byLabel, order, groups)
@@ -229,6 +233,60 @@ var comparisonBands = []lineBucket{
 // number. A median over a handful of sessions invites a conclusion the sample
 // can't carry, and a blank cell is the honest way to say "no answer here".
 const minComparisonN = 8
+
+// savingsEstimate is the headline "what did RepoGuide save" figure.
+//
+// It is built stratum by stratum (agent x size band) rather than from pooled
+// totals, because the pooled version measures the mix as much as the effect:
+// RepoGuide adoption is uneven across agents, and agents differ several-fold
+// in cost per line, so pooling can produce a large "saving" from nothing but
+// which agent happened to use it. Strata where either arm is under-powered are
+// dropped rather than guessed at, so the figure covers only part of the work —
+// coveredLines against totalLines is what says how much.
+type savingsEstimate struct {
+	usd          float64
+	strata       int
+	coveredLines int64
+	totalLines   int64
+	randomized   bool
+}
+
+// estimateSavings sums (control $/10 lines - RepoGuide $/10 lines) x RepoGuide
+// lines across every stratum where both arms clear minComparisonN. A negative
+// result means RepoGuide cost more and is reported as such: a savings figure
+// that can only be positive isn't a measurement.
+func estimateSavings(agents []string, groups map[string]map[string]*sessionStat, randomized bool) (savingsEstimate, bool) {
+	est := savingsEstimate{randomized: randomized}
+	for _, agent := range agents {
+		for _, band := range comparisonBands {
+			g := groups[agent][band.label]
+			if g == nil {
+				continue
+			}
+			treated := g.repoguide
+			if treated == nil {
+				continue
+			}
+			est.totalLines += treated.linesEdited
+			ctrl := g.nonRepoguide
+			if randomized {
+				ctrl = g.holdout
+			}
+			if ctrl == nil || ctrl.sessions < minComparisonN || treated.sessions < minComparisonN {
+				continue
+			}
+			ctrlCost, ok1 := ctrl.medianCostPer10Lines()
+			treatedCost, ok2 := treated.medianCostPer10Lines()
+			if !ok1 || !ok2 {
+				continue
+			}
+			est.usd += (ctrlCost - treatedCost) * float64(treated.linesEdited) / 10
+			est.coveredLines += treated.linesEdited
+			est.strata++
+		}
+	}
+	return est, est.strata > 0
+}
 
 // comparisonBandLabel returns "" for sessions with no measured edits: cost per
 // line is undefined there, so they belong in no band.

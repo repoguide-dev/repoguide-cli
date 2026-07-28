@@ -539,10 +539,13 @@ func printConfigStatus(status repopkg.LocalSetupStatus) {
 		fmt.Println("  Feedback: asks before submitting (--auto-feedback to change)")
 	}
 	fmt.Printf("  Branch:   %s (--branch to change)\n", branchOrDefault(repoCfg.Branch))
-	if pct := config.HoldoutPct(); pct > 0 {
+	switch pct := config.HoldoutPct(); {
+	case pct == 0:
+		fmt.Println("  Holdout:  off - `repoguide stats` can only estimate, not measure")
+	case config.HoldoutPctExplicitlySet():
 		fmt.Printf("  Holdout:  %d%% of sessions get no briefing (--holdout to change)\n", pct)
-	} else {
-		fmt.Println("  Holdout:  off (--holdout 20 to measure RepoGuide's effect)")
+	default:
+		fmt.Printf("  Holdout:  %d%% of sessions get no briefing (default; --holdout to change)\n", pct)
 	}
 }
 
@@ -556,7 +559,7 @@ func printHoldoutStatus() {
 		fmt.Println("  Status:   off - every session gets its briefing")
 		fmt.Println("  `repoguide stats` can only compare sessions where you chose to use")
 		fmt.Println("  RepoGuide against ones where you didn't, which is not an experiment.")
-		fmt.Println("  Enable a holdout to measure a real effect: repoguide repo config --holdout 20")
+		fmt.Printf("  Re-enable with: repoguide repo config --holdout %d\n", config.DefaultHoldoutPct)
 		return
 	}
 	fmt.Printf("  Status:   on - %d%% of sessions get no briefing\n", pct)

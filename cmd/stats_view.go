@@ -8,6 +8,43 @@ import (
 	"github.com/charmbracelet/lipgloss"
 )
 
+// renderSavingsHeadline is the top line of `repoguide stats`. It states how the
+// number was derived in the same breath as the number, because "saved $X" is
+// the one figure people quote onward and the qualifier has to travel with it.
+func renderSavingsHeadline(est savingsEstimate) string {
+	verb, amount := "Saved", est.usd
+	if est.usd < 0 {
+		verb, amount = "Extra cost", -est.usd
+	}
+	headline := fmt.Sprintf("  %s with RepoGuide: %s",
+		verb, lipgloss.NewStyle().Bold(true).Render(fmt.Sprintf("$%.2f", amount)))
+
+	basis := "estimated, not measured - RepoGuide was chosen per session"
+	if est.randomized {
+		basis = "measured against a randomized holdout"
+	}
+	lines := []string{headline, muted.Render(fmt.Sprintf("  %s; compared within each agent and task size", basis))}
+
+	// Under-powered strata are dropped, so the figure can silently cover a
+	// fraction of the work. Saying which fraction stops it reading as a total.
+	if est.totalLines > 0 && est.coveredLines < est.totalLines {
+		lines = append(lines, muted.Render(fmt.Sprintf(
+			"  covers %d%% of RepoGuide-edited lines (%d comparable %s)",
+			est.coveredLines*100/est.totalLines, est.strata, plural(est.strata, "group", "groups"))))
+	}
+	if !est.randomized {
+		lines = append(lines, muted.Render("  for a measured figure: repoguide repo config --holdout 20"))
+	}
+	return strings.Join(lines, "\n")
+}
+
+func plural(n int, one, many string) string {
+	if n == 1 {
+		return one
+	}
+	return many
+}
+
 // renderOverviewBlock describes the session pool. It deliberately carries no
 // "with RepoGuide" comparison: RepoGuide is chosen for harder tasks and is not
 // evenly spread across agents, so a headline split here compares two unlike
