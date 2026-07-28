@@ -539,6 +539,14 @@ func printConfigStatus(status repopkg.LocalSetupStatus) {
 		fmt.Println("  Feedback: asks before submitting (--auto-feedback to change)")
 	}
 	fmt.Printf("  Branch:   %s (--branch to change)\n", branchOrDefault(repoCfg.Branch))
+	printHoldoutLine()
+}
+
+// printHoldoutLine is shared by the local- and online-mode status blocks. The
+// holdout is a global setting that changes what every session receives, so
+// hiding it from either mode leaves users unable to explain a session that
+// got no briefing.
+func printHoldoutLine() {
 	switch pct := config.HoldoutPct(); {
 	case pct == 0:
 		fmt.Println("  Holdout:  off - `repoguide stats` can only estimate, not measure")
@@ -630,6 +638,7 @@ func printOnlineModeStatus(status repopkg.LocalSetupStatus) {
 		fmt.Println("  Last sync: never")
 	}
 	fmt.Printf("  Branch:    %s (--branch to change)\n", branchOrDefault(cfg.Branch))
+	printHoldoutLine()
 	fmt.Println()
 	fmt.Println("  To switch to offline mode: repoguide repo init --offline --force")
 }
