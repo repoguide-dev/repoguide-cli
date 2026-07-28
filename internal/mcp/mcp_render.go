@@ -151,30 +151,6 @@ func renderTestContext(ctx *MCPTopicContext, files []string) string {
 	return strings.TrimRight(sb.String(), "\n")
 }
 
-// renderSelectedAdvice folds advice items into plain prose instead of leaving
-// them as a raw struct list for the caller to JSON-dump.
-func renderSelectedAdvice(items []contracts.AdviceItem) string {
-	if len(items) == 0 {
-		return ""
-	}
-	var sb strings.Builder
-	sb.WriteString("Advice:\n")
-	for _, item := range items {
-		fmt.Fprintf(&sb, "- %s", item.Text)
-		if item.Severity != "" {
-			fmt.Fprintf(&sb, " [%s]", item.Severity)
-		}
-		sb.WriteByte('\n')
-		for _, step := range item.Steps {
-			fmt.Fprintf(&sb, "  - %s\n", step)
-		}
-		if len(item.Files) > 0 {
-			fmt.Fprintf(&sb, "  Files: %s\n", strings.Join(item.Files, ", "))
-		}
-	}
-	return strings.TrimRight(sb.String(), "\n")
-}
-
 func renderTopicClarification(reason, question string, matches []contracts.TopicMatch) string {
 	var sb strings.Builder
 	sb.WriteString("Task-to-topic match\n")

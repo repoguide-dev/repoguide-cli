@@ -649,9 +649,6 @@ func callMCPTool(name string, arguments map[string]any, client *CloudClient) (ma
 		if result.TopicID != "" && result.ContextText != "" {
 			text += "\n\n" + result.ContextText
 		}
-		if advice := renderSelectedAdvice(result.SelectedAdvice); advice != "" {
-			text += "\n\n" + advice
-		}
 		out := map[string]any{"text": text}
 		if result.TopicID != "" {
 			out["topic_id"] = result.TopicID
