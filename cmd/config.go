@@ -25,6 +25,7 @@ func init() {
 	repoConfigCmd.Flags().Bool("auto-feedback", false, "Submit end-of-session feedback automatically, without asking")
 	repoConfigCmd.Flags().Bool("no-auto-feedback", false, "Ask before submitting end-of-session feedback (default)")
 	repoConfigCmd.Flags().String("branch", "", "Branch RepoGuide filters repo-experience/topic file paths against (default: main)")
+	repoConfigCmd.Flags().Int("holdout", -1, "Percent of sessions to withhold the briefing from, creating a randomized control group for `repoguide stats` (0 disables)")
 	repoCmd.AddCommand(repoConfigCmd)
 }
 
@@ -43,6 +44,14 @@ func runRepoConfig(cmd *cobra.Command, _ []string) error {
 	branch, _ := cmd.Flags().GetString("branch")
 	if del {
 		return runRemove(cmd, nil)
+	}
+	if cmd.Flags().Changed("holdout") {
+		pct, _ := cmd.Flags().GetInt("holdout")
+		if err := config.SetHoldoutPct(pct); err != nil {
+			return err
+		}
+		printHoldoutStatus()
+		return nil
 	}
 	if enableHooks && disableHooks {
 		return fmt.Errorf("choose only one of --enable-hooks or --disable-hooks")
@@ -530,6 +539,32 @@ func printConfigStatus(status repopkg.LocalSetupStatus) {
 		fmt.Println("  Feedback: asks before submitting (--auto-feedback to change)")
 	}
 	fmt.Printf("  Branch:   %s (--branch to change)\n", branchOrDefault(repoCfg.Branch))
+	if pct := config.HoldoutPct(); pct > 0 {
+		fmt.Printf("  Holdout:  %d%% of sessions get no briefing (--holdout to change)\n", pct)
+	} else {
+		fmt.Println("  Holdout:  off (--holdout 20 to measure RepoGuide's effect)")
+	}
+}
+
+// printHoldoutStatus explains what the setting actually does to the user's
+// sessions, since a bare percentage reads like a sampling rate rather than
+// "some of your sessions will deliberately get no help".
+func printHoldoutStatus() {
+	pct := config.HoldoutPct()
+	fmt.Println(renderSectionTitle("Measurement holdout"))
+	if pct == 0 {
+		fmt.Println("  Status:   off - every session gets its briefing")
+		fmt.Println("  `repoguide stats` can only compare sessions where you chose to use")
+		fmt.Println("  RepoGuide against ones where you didn't, which is not an experiment.")
+		fmt.Println("  Enable a holdout to measure a real effect: repoguide repo config --holdout 20")
+		return
+	}
+	fmt.Printf("  Status:   on - %d%% of sessions get no briefing\n", pct)
+	fmt.Println("  Those sessions form a randomized control group, so `repoguide stats`")
+	fmt.Println("  can report a measured effect instead of a self-selected comparison.")
+	fmt.Println("  Assignment is derived from the session ID, so it is stable within a")
+	fmt.Println("  session and every call in it lands in the same arm.")
+	fmt.Println("  Turn off with: repoguide repo config --holdout 0")
 }
 
 func branchOrDefault(branch string) string {

@@ -45,3 +45,23 @@ func TestCodexPatchApplyEndYieldsEditsAndLineCounts(t *testing.T) {
 		t.Errorf("lines = +%d/-%d, want +3/-1", got.LinesAdded, got.LinesRemoved)
 	}
 }
+
+// A held-out session called RepoGuide and was refused: it is the randomized
+// control, and must not be filed alongside sessions that never called at all.
+func TestClassifyRepoGuideResult(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		text string
+		want repoGuideResultKind
+	}{
+		{"briefing", "Task-to-topic match\n- 82% Session Import", repoGuideExperience},
+		{"holdout", "No repository experience is being served.\n\n[repoguide:holdout]", repoGuideHoldout},
+		{"clarification", "Task maps to multiple topics", repoGuideNoExperience},
+		{"error", "understand-task failed: boom", repoGuideNoExperience},
+		{"empty", "   ", repoGuideNoExperience},
+	} {
+		if got := classifyRepoGuideResult(tc.text); got != tc.want {
+			t.Errorf("%s: got %v, want %v", tc.name, got, tc.want)
+		}
+	}
+}

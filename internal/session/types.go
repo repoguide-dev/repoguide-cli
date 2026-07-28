@@ -16,9 +16,12 @@ type SessionSummary struct {
 	RepoRelativeCwd string
 	RepoInitialized bool
 	UsedRepoGuide   bool
-	CostUSD         float64
-	ReadFileCount   int
-	EditFileCount   int
+	// RepoGuideHoldout marks a session the MCP server deliberately withheld
+	// the briefing from — the randomized control arm.
+	RepoGuideHoldout bool
+	CostUSD          float64
+	ReadFileCount    int
+	EditFileCount    int
 }
 
 type SessionArtifactSource struct {

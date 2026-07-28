@@ -143,14 +143,16 @@ func runStats(cmd *cobra.Command, _ []string) error {
 	var total sessionStat
 	for _, a := range analyzed {
 		if !outlierPaths[a.summary.Path] {
-			total.add(a.metrics, a.summary.UsedRepoGuide)
+			total.add(a.metrics, sessionCohort(a.summary))
 		}
 	}
 
 	groups := map[string]*sessionStat{}
 	order := []string{}
-	lineGroups := map[string]*sessionStat{}
-	lineOrder := []string{}
+	// Keyed by agent then band: pooling agents lets a cheap-agent baseline stand
+	// in for an expensive-agent one, which can flip the sign of the comparison.
+	cmpGroups := map[string]map[string]*sessionStat{}
+	agentOrder := []string{}
 	for _, a := range analyzed {
 		if outlierPaths[a.summary.Path] {
 			continue
@@ -160,19 +162,26 @@ func runStats(cmd *cobra.Command, _ []string) error {
 			groups[key] = &sessionStat{}
 			order = append(order, key)
 		}
-		groups[key].add(a.metrics, a.summary.UsedRepoGuide)
+		groups[key].add(a.metrics, sessionCohort(a.summary))
 
-		lineKey := lineBucketLabel(a.metrics)
-		if _, exists := lineGroups[lineKey]; !exists {
-			lineGroups[lineKey] = &sessionStat{}
-			lineOrder = append(lineOrder, lineKey)
+		band := comparisonBandLabel(a.metrics)
+		if band == "" {
+			continue
 		}
-		lineGroups[lineKey].add(a.metrics, a.summary.UsedRepoGuide)
+		agent := valueOrFallback(displayAgentName(a.summary.Agent), "(unknown)")
+		if _, exists := cmpGroups[agent]; !exists {
+			cmpGroups[agent] = map[string]*sessionStat{}
+			agentOrder = append(agentOrder, agent)
+		}
+		if _, exists := cmpGroups[agent][band]; !exists {
+			cmpGroups[agent][band] = &sessionStat{}
+		}
+		cmpGroups[agent][band].add(a.metrics, sessionCohort(a.summary))
 	}
 	sort.Slice(order, func(i, j int) bool {
 		return groups[order[i]].sessions > groups[order[j]].sessions
 	})
-	sort.Slice(lineOrder, func(i, j int) bool { return lineBucketRank(lineOrder[i]) < lineBucketRank(lineOrder[j]) })
+	sort.Strings(agentOrder)
 
 	byLabel := strings.ToUpper(byFlag[:1]) + byFlag[1:]
 	titleText := fmt.Sprintf("RepoGuide Stats - %s - last %s", scope, sinceFlag)
@@ -182,25 +191,9 @@ func runStats(cmd *cobra.Command, _ []string) error {
 	printOverview(&total)
 	fmt.Println()
 	printGroupTable(byLabel, order, groups)
-	if total.repoguide != nil && total.repoguide.sessions > 0 {
-		fmt.Println()
-		fmt.Printf("%s - RepoGuide vs. not, per bucket\n", headStyle.Render("By lines edited"))
-		fmt.Println(muted.Render("  each cell: without RepoGuide (with RepoGuide)"))
-		fmt.Println()
-		printLinesBucketTable(lineOrder, lineGroups)
-	}
+	printComparisonSection(agentOrder, cmpGroups, &total)
 	printOutliersBlock(outliers)
 	return nil
-}
-
-// lineBucketRank orders line-edit buckets from smallest to largest instead of by session count.
-func lineBucketRank(bucket string) int {
-	for i, b := range lineBuckets {
-		if b.label == bucket {
-			return i
-		}
-	}
-	return len(lineBuckets)
 }
 
 type lineBucket struct {
@@ -220,6 +213,36 @@ var lineBuckets = []lineBucket{
 	{"251-500", 500},
 	{"501-1000", 1000},
 	{"1000+", 0},
+}
+
+// comparisonBands are deliberately coarser than lineBuckets. The bucket table
+// splits sessions three ways (band x agent x cohort), and at realistic session
+// volumes nine buckets leaves single-digit cells that read as signal while
+// being noise. Three bands is what the data usually supports.
+var comparisonBands = []lineBucket{
+	{"small (1-50)", 50},
+	{"medium (51-250)", 250},
+	{"large (250+)", 0},
+}
+
+// minComparisonN is the floor below which a cell renders as "-" instead of a
+// number. A median over a handful of sessions invites a conclusion the sample
+// can't carry, and a blank cell is the honest way to say "no answer here".
+const minComparisonN = 8
+
+// comparisonBandLabel returns "" for sessions with no measured edits: cost per
+// line is undefined there, so they belong in no band.
+func comparisonBandLabel(m internal.SessionMetrics) string {
+	total := m.LinesAdded + m.LinesRemoved
+	if total <= 0 {
+		return ""
+	}
+	for _, b := range comparisonBands {
+		if b.max != 0 && total <= b.max {
+			return b.label
+		}
+	}
+	return comparisonBands[len(comparisonBands)-1].label
 }
 
 func lineBucketLabel(m internal.SessionMetrics) string {
@@ -253,23 +276,47 @@ type sessionStat struct {
 	// total tokens only for sessions that have pre-edit token data (used for %)
 	preEditBaseInputTokens  int64
 	preEditBaseOutputTokens int64
-	repoguide               *sessionStat // sessions where repoguide was used (subset of the total)
-	nonRepoguide            *sessionStat // sessions where repoguide was not used (disjoint from repoguide)
+	repoguide               *sessionStat // sessions that received a briefing
+	nonRepoguide            *sessionStat // sessions that never called RepoGuide (self-selected)
+	holdout                 *sessionStat // sessions randomly refused a briefing (true control)
 }
 
-func (s *sessionStat) add(m internal.SessionMetrics, usedRepoGuide bool) {
-	s.addBase(m)
-	if usedRepoGuide {
-		if s.repoguide == nil {
-			s.repoguide = &sessionStat{}
-		}
-		s.repoguide.addBase(m)
-	} else {
-		if s.nonRepoguide == nil {
-			s.nonRepoguide = &sessionStat{}
-		}
-		s.nonRepoguide.addBase(m)
+// cohort is which arm of the comparison a session belongs to. holdout sessions
+// asked for a briefing and were randomly refused one, so they are the only
+// control group that isn't self-selected; cohortNone sessions never asked,
+// which usually says more about the task than about RepoGuide.
+type cohort int
+
+const (
+	cohortNone cohort = iota
+	cohortRepoGuide
+	cohortHoldout
+)
+
+func sessionCohort(s internal.SessionSummary) cohort {
+	switch {
+	case s.UsedRepoGuide:
+		return cohortRepoGuide
+	case s.RepoGuideHoldout:
+		return cohortHoldout
+	default:
+		return cohortNone
 	}
+}
+
+func (s *sessionStat) add(m internal.SessionMetrics, c cohort) {
+	s.addBase(m)
+	target := &s.nonRepoguide
+	switch c {
+	case cohortRepoGuide:
+		target = &s.repoguide
+	case cohortHoldout:
+		target = &s.holdout
+	}
+	if *target == nil {
+		*target = &sessionStat{}
+	}
+	(*target).addBase(m)
 }
 
 // addBase accumulates m into s without touching the repoguide/nonRepoguide
@@ -314,16 +361,6 @@ func (s *sessionStat) medianCostPer10Lines() (float64, bool) {
 		return (v[mid-1] + v[mid]) / 2, true
 	}
 	return v[mid], true
-}
-
-// exclusiveBaseline returns the non-RepoGuide cohort when both cohorts are present, so
-// "Overall" vs. "With RepoGuide" compares two disjoint sets instead of a subset vs. its
-// superset (which the subset is always inside of, biasing the comparison).
-func exclusiveBaseline(s *sessionStat) *sessionStat {
-	if s.repoguide != nil && s.repoguide.sessions > 0 && s.nonRepoguide != nil && s.nonRepoguide.sessions > 0 {
-		return s.nonRepoguide
-	}
-	return s
 }
 
 // ── small helpers ─────────────────────────────────────────────────────────────

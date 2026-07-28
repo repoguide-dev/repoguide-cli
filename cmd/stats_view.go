@@ -8,6 +8,11 @@ import (
 	"github.com/charmbracelet/lipgloss"
 )
 
+// renderOverviewBlock describes the session pool. It deliberately carries no
+// "with RepoGuide" comparison: RepoGuide is chosen for harder tasks and is not
+// evenly spread across agents, so a headline split here compares two unlike
+// populations and reliably reads as an effect that isn't there. The per-agent
+// comparison table is the only place that comparison can be made honestly.
 func renderOverviewBlock(s *sessionStat) string {
 	lines := []string{
 		headStyle.Render("Overview"),
@@ -19,30 +24,14 @@ func renderOverviewBlock(s *sessionStat) string {
 	if s.inputTokens+s.outputTokens > 0 {
 		lines = append(lines, fmt.Sprintf("  Total tokens:  %s", formatTokensK(s.inputTokens+s.outputTokens)))
 	}
-	b := exclusiveBaseline(s)
-	if b.costUSD > 0 {
-		avgCost := fmt.Sprintf("  Avg cost:      $%.2f/session", safeDivide(b.costUSD, float64(b.sessions)))
-		avgCost += hCmp(s, func(h *sessionStat) string {
-			return fmt.Sprintf("$%.2f/session", safeDivide(h.costUSD, float64(h.sessions)))
-		})
-		lines = append(lines, avgCost)
+	if s.costUSD > 0 {
+		lines = append(lines, fmt.Sprintf("  Avg cost:      $%.2f/session", safeDivide(s.costUSD, float64(s.sessions))))
 	}
-	if total := b.inputTokens + b.outputTokens; total > 0 {
-		avgTok := fmt.Sprintf("  Avg tokens:    %s/session", fmtTokensShort(safeDivideInt(total, b.sessions)))
-		avgTok += hCmp(s, func(h *sessionStat) string {
-			return fmtTokensShort(safeDivideInt(h.inputTokens+h.outputTokens, h.sessions)) + "/session"
-		})
-		lines = append(lines, avgTok)
+	if total := s.inputTokens + s.outputTokens; total > 0 {
+		lines = append(lines, fmt.Sprintf("  Avg tokens:    %s/session", fmtTokensShort(safeDivideInt(total, s.sessions))))
 	}
-	if b.edits > 0 && b.costUSD > 0 {
-		avgCostPerEdit := fmt.Sprintf("  Avg cost/edit: $%.2f", safeDivide(b.costUSD, float64(b.edits)))
-		avgCostPerEdit += hCmp(s, func(h *sessionStat) string {
-			if h.edits == 0 {
-				return ""
-			}
-			return fmt.Sprintf("$%.2f", safeDivide(h.costUSD, float64(h.edits)))
-		})
-		lines = append(lines, avgCostPerEdit)
+	if s.edits > 0 && s.costUSD > 0 {
+		lines = append(lines, fmt.Sprintf("  Avg cost/edit: $%.2f", safeDivide(s.costUSD, float64(s.edits))))
 	}
 	return strings.Join(lines, "\n")
 }
@@ -89,67 +78,127 @@ func printGroupTable(byLabel string, order []string, groups map[string]*sessionS
 	fmt.Println(renderGroupTableBlock(byLabel, order, groups))
 }
 
-// renderLinesBucketTableBlock compares RepoGuide-used vs. not-used sessions within each
-// lines-edited bucket, so cost/exploration differences aren't confounded by task size.
-// Each metric is one column formatted as "without (with)".
-func renderLinesBucketTableBlock(order []string, groups map[string]*sessionStat) string {
+// hasHoldout reports whether a randomized control arm exists anywhere in the
+// data. When it does the comparison is an experiment; when it doesn't, it is a
+// description of two populations the user chose between, and must say so.
+func hasHoldout(groups map[string]map[string]*sessionStat) bool {
+	for _, bands := range groups {
+		for _, g := range bands {
+			if g.holdout != nil && g.holdout.sessions > 0 {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+// renderComparisonBlock compares RepoGuide against its control arm within each
+// agent and size band. Both stratifications are load-bearing: task size drives
+// cost per line, and agents differ several-fold in cost per line, so pooling
+// either one lets the mix between groups masquerade as an effect.
+func renderComparisonBlock(agents []string, groups map[string]map[string]*sessionStat, randomized bool) string {
+	control := func(g *sessionStat) *sessionStat {
+		if randomized {
+			return g.holdout
+		}
+		return g.nonRepoguide
+	}
 	cols := []tableColumn{
-		{title: "Lines edited", width: 14},
+		{title: "Lines edited", width: 17},
 		{title: "N", width: 12},
 		{title: "Median $/10 lines", width: 22},
 		{title: "Pre-edit calls", width: 16},
 	}
-	lines := []string{renderTableHeader(cols)}
-	sepWidth := (len(cols) - 1) * 2
-	for _, c := range cols {
-		sepWidth += c.width
+	controlName := "never called RepoGuide"
+	if randomized {
+		controlName = "holdout"
 	}
-	lines = append(lines, muted.Render(strings.Repeat("─", sepWidth)))
-	for _, bucket := range order {
-		g := groups[bucket]
-		no, yes := g.nonRepoguide, g.repoguide
-		if (no == nil || no.sessions == 0) && (yes == nil || yes.sessions == 0) {
+
+	var out []string
+	if randomized {
+		out = append(out, headStyle.Render("RepoGuide vs. holdout")+" - randomized, per agent")
+	} else {
+		out = append(out, headStyle.Render("RepoGuide vs. not")+" - observational, per agent")
+	}
+	out = append(out, muted.Render(fmt.Sprintf("  each cell: %s (with RepoGuide)", controlName)))
+	if !randomized {
+		out = append(out, muted.Render("  Not an experiment: RepoGuide was chosen per session, typically on harder"))
+		out = append(out, muted.Render("  tasks, so these differences include that choice. Enable a holdout to"))
+		out = append(out, muted.Render("  measure an effect: repoguide repo config --holdout 20"))
+	}
+	out = append(out, muted.Render(fmt.Sprintf("  cells with fewer than %d sessions per arm show as \"-\"", minComparisonN)))
+
+	shown := 0
+	for _, agent := range agents {
+		bands := groups[agent]
+		var rows []string
+		for _, band := range comparisonBands {
+			g := bands[band.label]
+			if g == nil {
+				continue
+			}
+			no, yes := control(g), g.repoguide
+			if no == nil {
+				no = &sessionStat{}
+			}
+			if yes == nil {
+				yes = &sessionStat{}
+			}
+			if no.sessions == 0 && yes.sessions == 0 {
+				continue
+			}
+			pair := func(a, b string) string { return fmt.Sprintf("%s (%s)", a, b) }
+			// Guarded per arm, not per row: one arm having enough sessions
+			// says nothing about the other, and a lone number next to a blank
+			// is what tells the user which side is missing.
+			guarded := func(s *sessionStat, f func(*sessionStat) string) string {
+				if s.sessions < minComparisonN {
+					return "-"
+				}
+				return f(s)
+			}
+			costPer10Lines := func(s *sessionStat) string {
+				m, ok := s.medianCostPer10Lines()
+				if !ok {
+					return "-"
+				}
+				return formatCost(m)
+			}
+			rows = append(rows, renderTableRow(cols,
+				band.label,
+				pair(strconv.Itoa(no.sessions), strconv.Itoa(yes.sessions)),
+				pair(guarded(no, costPer10Lines), guarded(yes, costPer10Lines)),
+				pair(guarded(no, func(s *sessionStat) string { return fmtAvg(s.preEditToolCalls, s.sessions) }),
+					guarded(yes, func(s *sessionStat) string { return fmtAvg(s.preEditToolCalls, s.sessions) })),
+			))
+		}
+		if len(rows) == 0 {
 			continue
 		}
-		if no == nil {
-			no = &sessionStat{}
+		shown++
+		sepWidth := (len(cols) - 1) * 2
+		for _, c := range cols {
+			sepWidth += c.width
 		}
-		if yes == nil {
-			yes = &sessionStat{}
-		}
-		withoutWith := func(without, with string) string {
-			return fmt.Sprintf("%s (%s)", without, with)
-		}
-		costPer10Lines := func(s *sessionStat) string {
-			m, ok := s.medianCostPer10Lines()
-			if !ok {
-				return "-"
-			}
-			return formatCost(m)
-		}
-		lines = append(lines, renderTableRow(cols,
-			bucket,
-			withoutWith(strconv.Itoa(no.sessions), strconv.Itoa(yes.sessions)),
-			withoutWith(costPer10Lines(no), costPer10Lines(yes)),
-			withoutWith(fmtAvg(no.preEditToolCalls, no.sessions), fmtAvg(yes.preEditToolCalls, yes.sessions)),
-		))
+		out = append(out, "", "  "+headStyle.Render(agent), renderTableHeader(cols), muted.Render(strings.Repeat("─", sepWidth)))
+		out = append(out, rows...)
 	}
-	return strings.Join(lines, "\n")
-}
-
-func printLinesBucketTable(order []string, groups map[string]*sessionStat) {
-	fmt.Println(renderLinesBucketTableBlock(order, groups))
-}
-
-func hCmp(s *sessionStat, field func(*sessionStat) string) string {
-	if s.repoguide == nil || s.repoguide.sessions == 0 {
+	if shown == 0 {
 		return ""
 	}
-	v := field(s.repoguide)
-	if v == "" || v == "-" || v == "0" {
-		return ""
+	return strings.Join(out, "\n")
+}
+
+func printComparisonSection(agents []string, groups map[string]map[string]*sessionStat, total *sessionStat) {
+	if total.repoguide == nil || total.repoguide.sessions == 0 {
+		return
 	}
-	return fmt.Sprintf("  (%s with RepoGuide)", v)
+	block := renderComparisonBlock(agents, groups, hasHoldout(groups))
+	if block == "" {
+		return
+	}
+	fmt.Println()
+	fmt.Println(block)
 }
 
 type statsOutlier struct {

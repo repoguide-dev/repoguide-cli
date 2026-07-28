@@ -3,6 +3,7 @@ package config
 
 import (
 	"encoding/json"
+	"fmt"
 	"os"
 	"path/filepath"
 )
@@ -11,6 +12,10 @@ type Config struct {
 	AnthropicAPIKey string `json:"anthropic_api_key,omitempty"`
 	UseClaudeCLI    bool   `json:"use_claude_cli,omitempty"`
 	AutoFeedback    bool   `json:"auto_feedback,omitempty"`
+	// HoldoutPct is the percentage of sessions for which the MCP server
+	// withholds the repo-experience briefing, creating a randomized control
+	// group. 0 disables the experiment.
+	HoldoutPct int `json:"holdout_pct,omitempty"`
 }
 
 // dataDirName is overridden in the local development build.
@@ -68,6 +73,29 @@ func AutoFeedback() bool {
 func SetAutoFeedback(v bool) error {
 	c := load()
 	c.AutoFeedback = v
+	return save(c)
+}
+
+// HoldoutPct returns the configured holdout percentage, clamped to 0-100.
+// 0 means the experiment is off and every session gets its briefing.
+func HoldoutPct() int {
+	v := load().HoldoutPct
+	if v < 0 {
+		return 0
+	}
+	if v > 100 {
+		return 100
+	}
+	return v
+}
+
+// SetHoldoutPct saves the holdout percentage to the global config file.
+func SetHoldoutPct(v int) error {
+	if v < 0 || v > 100 {
+		return fmt.Errorf("holdout must be between 0 and 100, got %d", v)
+	}
+	c := load()
+	c.HoldoutPct = v
 	return save(c)
 }
 

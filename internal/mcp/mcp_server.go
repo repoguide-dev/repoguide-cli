@@ -617,6 +617,11 @@ func callMCPTool(name string, arguments map[string]any, client *CloudClient) (ma
 		if err := decodeToolArguments(arguments, &input); err != nil {
 			return nil, "", err
 		}
+		// Checked before any lookup so a held-out session is a true control:
+		// it costs nothing and touches no repo state.
+		if text, held := holdoutForSession(client.SessionID); held {
+			return map[string]any{"text": text}, "", nil
+		}
 		repoID, repoPath := resolveRepoContext(input.RepoID, "")
 		if repoID == "" {
 			return map[string]any{"text": UnderstandTaskResponse("")}, "", nil

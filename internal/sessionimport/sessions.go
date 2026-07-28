@@ -109,20 +109,21 @@ type repoSessionIndexFile struct {
 }
 
 type sessionIndexEntry struct {
-	ID              string  `json:"id"`
-	Agent           string  `json:"agent"`
-	Name            string  `json:"name"`
-	Cwd             string  `json:"cwd"`
-	Model           string  `json:"model"`
-	Timestamp       string  `json:"timestamp"`
-	Path            string  `json:"path"`
-	RepoID          string  `json:"repoId,omitempty"`
-	UsedRepoGuide   bool    `json:"usedRepoGuide,omitempty"`
-	FileModUnixNano int64   `json:"fileModUnixNano"`
-	FileSize        int64   `json:"fileSize"`
-	CostUSD         float64 `json:"costUsd,omitempty"`
-	ReadFileCount   int     `json:"readFileCount,omitempty"`
-	EditFileCount   int     `json:"editFileCount,omitempty"`
+	ID               string  `json:"id"`
+	Agent            string  `json:"agent"`
+	Name             string  `json:"name"`
+	Cwd              string  `json:"cwd"`
+	Model            string  `json:"model"`
+	Timestamp        string  `json:"timestamp"`
+	Path             string  `json:"path"`
+	RepoID           string  `json:"repoId,omitempty"`
+	UsedRepoGuide    bool    `json:"usedRepoGuide,omitempty"`
+	RepoGuideHoldout bool    `json:"repoGuideHoldout,omitempty"`
+	FileModUnixNano  int64   `json:"fileModUnixNano"`
+	FileSize         int64   `json:"fileSize"`
+	CostUSD          float64 `json:"costUsd,omitempty"`
+	ReadFileCount    int     `json:"readFileCount,omitempty"`
+	EditFileCount    int     `json:"editFileCount,omitempty"`
 }
 
 type sessionSource struct {
@@ -647,17 +648,18 @@ func readRepoSessionIndex(path string) (repoSessionIndexFile, error) {
 
 func entryFromSession(session SessionSummary, info os.FileInfo) sessionIndexEntry {
 	entry := sessionIndexEntry{
-		ID:              session.ID,
-		Agent:           session.Agent,
-		Name:            session.Name,
-		Cwd:             session.Cwd,
-		Model:           session.Model,
-		Timestamp:       session.Timestamp.UTC().Format(time.RFC3339Nano),
-		Path:            session.Path,
-		RepoID:          session.RepoID,
-		UsedRepoGuide:   session.UsedRepoGuide,
-		FileModUnixNano: info.ModTime().UnixNano(),
-		FileSize:        info.Size(),
+		ID:               session.ID,
+		Agent:            session.Agent,
+		Name:             session.Name,
+		Cwd:              session.Cwd,
+		Model:            session.Model,
+		Timestamp:        session.Timestamp.UTC().Format(time.RFC3339Nano),
+		Path:             session.Path,
+		RepoID:           session.RepoID,
+		UsedRepoGuide:    session.UsedRepoGuide,
+		RepoGuideHoldout: session.RepoGuideHoldout,
+		FileModUnixNano:  info.ModTime().UnixNano(),
+		FileSize:         info.Size(),
 	}
 	if cached, ok, _ := LoadCachedSessionAnalysis(session); ok {
 		entry.CostUSD = cached.Analysis.Metrics.EstimatedCostUSD
@@ -669,18 +671,19 @@ func entryFromSession(session SessionSummary, info os.FileInfo) sessionIndexEntr
 
 func (e sessionIndexEntry) toSummary(repos []RepoConfig) SessionSummary {
 	s := SessionSummary{
-		ID:            e.ID,
-		Agent:         e.Agent,
-		Name:          e.Name,
-		Cwd:           e.Cwd,
-		Model:         e.Model,
-		Timestamp:     parseTime(e.Timestamp),
-		Path:          e.Path,
-		RepoID:        e.RepoID,
-		UsedRepoGuide: e.UsedRepoGuide,
-		CostUSD:       e.CostUSD,
-		ReadFileCount: e.ReadFileCount,
-		EditFileCount: e.EditFileCount,
+		ID:               e.ID,
+		Agent:            e.Agent,
+		Name:             e.Name,
+		Cwd:              e.Cwd,
+		Model:            e.Model,
+		Timestamp:        parseTime(e.Timestamp),
+		Path:             e.Path,
+		RepoID:           e.RepoID,
+		UsedRepoGuide:    e.UsedRepoGuide,
+		RepoGuideHoldout: e.RepoGuideHoldout,
+		CostUSD:          e.CostUSD,
+		ReadFileCount:    e.ReadFileCount,
+		EditFileCount:    e.EditFileCount,
 	}
 	for _, r := range repos {
 		if r.RepoID == e.RepoID && e.RepoID != "" {
@@ -940,8 +943,11 @@ func readCodexSession(path string, indexByID map[string]codexIndexEntry) (Sessio
 				case payload.Type == "function_call" && isRepoGuideUnderstandTaskToolName(payload.Name) && payload.CallID != "":
 					pendingRepoGuideCalls[payload.CallID] = true
 				case payload.Type == "function_call_output" && pendingRepoGuideCalls[payload.CallID]:
-					if repoGuideResultHasExperience(toolResultText(payload.Output)) {
+					switch classifyRepoGuideResult(toolResultText(payload.Output)) {
+					case repoGuideExperience:
 						session.UsedRepoGuide = true
+					case repoGuideHoldout:
+						session.RepoGuideHoldout = true
 					}
 				}
 			}
@@ -1057,8 +1063,13 @@ func readClaudeSession(path string) (SessionSummary, error) {
 					if item.Type != "tool_result" || !pendingRepoGuideCalls[item.ToolUseID] || item.IsError {
 						continue
 					}
-					if repoGuideResultHasExperience(toolResultText(item.Content)) {
+					switch classifyRepoGuideResult(toolResultText(item.Content)) {
+					case repoGuideExperience:
 						session.UsedRepoGuide = true
+					case repoGuideHoldout:
+						session.RepoGuideHoldout = true
+					}
+					if session.UsedRepoGuide {
 						break
 					}
 				}
@@ -1263,18 +1274,43 @@ func toolResultText(raw json.RawMessage) string {
 // tool result carried topic-specific guidance — the topic-list disambiguation
 // response and errors don't count as "used RepoGuide".
 func repoGuideResultHasExperience(text string) bool {
+	return classifyRepoGuideResult(text) == repoGuideExperience
+}
+
+type repoGuideResultKind int
+
+const (
+	// repoGuideNoExperience covers errors and clarification prompts: the call
+	// happened but no experience came back, and it wasn't a deliberate holdout.
+	repoGuideNoExperience repoGuideResultKind = iota
+	repoGuideExperience
+	// repoGuideHoldout marks a session the MCP server deliberately withheld
+	// from. These are the randomized control group, and must not be lumped in
+	// with sessions that simply never called RepoGuide — those self-selected.
+	repoGuideHoldout
+)
+
+// mcpHoldoutMarker mirrors mcp.HoldoutMarker. It is duplicated rather than
+// imported because sessionimport must not depend on the MCP server package;
+// the marker is a wire format between the two, so it changes only by choice.
+const mcpHoldoutMarker = "[repoguide:holdout]"
+
+func classifyRepoGuideResult(text string) repoGuideResultKind {
 	text = strings.TrimSpace(text)
 	if text == "" {
-		return false
+		return repoGuideNoExperience
+	}
+	if strings.Contains(text, mcpHoldoutMarker) {
+		return repoGuideHoldout
 	}
 	if strings.Contains(text, "Task maps to multiple topics") {
-		return false
+		return repoGuideNoExperience
 	}
 	// ponytail: substring match on the known error prefix; parse structured errors if formats multiply
 	if strings.Contains(text, "understand-task failed") {
-		return false
+		return repoGuideNoExperience
 	}
-	return true
+	return repoGuideExperience
 }
 
 func isRepoGuideUnderstandTaskToolName(name string) bool {
