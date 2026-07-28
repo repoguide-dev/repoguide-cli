@@ -77,6 +77,26 @@ func TestReportPageRendersEmpty(t *testing.T) {
 	}
 }
 
+func TestReportPageRendersSessionStrips(t *testing.T) {
+	view := buildReportView(analysis.RepoAnalysisBundle{Repo: analysis.RepoAnalysisRepo{Name: "demo"}})
+	view.SessionStrips = []analysis.SessionStrip{{
+		Title: "Fix Gson unexpected JSON structure", Calls: 3, EditIndex: 3, CostUSD: 1.25,
+		Markers: []string{"cold", "reopen", "edit"},
+		Labels:  []string{"Grep · handler", "Read · api/main.go", "Edit · api/main.go"},
+		Files:   []string{"", "api/main.go", "api/main.go"},
+	}}
+	var buf bytes.Buffer
+	if err := reportPageTmpl.Execute(&buf, view); err != nil {
+		t.Fatalf("render failed: %v", err)
+	}
+	for _, want := range []string{"Every session as a trace — 1 session", "Fix Gson unexpected JSON structure", "3 calls · edit at 3 · $1.25",
+		`data-l="Read · api/main.go" data-f="api/main.go"`, `class="m-edit"`, "re-read a file"} {
+		if !bytes.Contains(buf.Bytes(), []byte(want)) {
+			t.Fatalf("expected rendered output to contain %q, got:\n%s", want, buf.String())
+		}
+	}
+}
+
 func TestReportPageRendersWorstSessionCaseStudy(t *testing.T) {
 	bundle := analysis.RepoAnalysisBundle{
 		Repo:    analysis.RepoAnalysisRepo{Name: "demo"},
@@ -110,23 +130,21 @@ func TestReportPageRendersWorstSessionCaseStudy(t *testing.T) {
 	if err := reportPageTmpl.Execute(&buf, view); err != nil {
 		t.Fatalf("render failed: %v", err)
 	}
-	out := buf.String()
-	for _, want := range []string{"Repository deletion bug", ">24<", ">11<", ">3<", "files read", "searches run", "files reopened", "All before the first edit", "api/main.go"} {
-		if !bytes.Contains(buf.Bytes(), []byte(want)) {
-			t.Fatalf("expected rendered output to contain %q, got:\n%s", want, out)
-		}
-	}
-	for _, unwanted := range []string{"This fallback prompt should not render.", `class="arrow"`} {
+	// The worst session still feeds the share payload and its manifest, but is
+	// no longer rendered as a case-study card - the per-session strips replaced it.
+	for _, unwanted := range []string{"This fallback prompt should not render.", `class="case-study"`, "searches run"} {
 		if bytes.Contains(buf.Bytes(), []byte(unwanted)) {
 			t.Fatalf("expected rendered output not to contain %q", unwanted)
 		}
 	}
+	if !bytes.Contains(buf.Bytes(), []byte("The case-study session title shown above")) {
+		t.Fatalf("expected the share manifest to still declare the session title it sends")
+	}
 	heroIndex := bytes.Index(buf.Bytes(), []byte("Before the first edit, an agent reads"))
-	exampleIndex := bytes.Index(buf.Bytes(), []byte(`class="case-study"`))
 	actionIndex := bytes.Index(buf.Bytes(), []byte(`class="savings"`))
 	evidenceIndex := bytes.Index(buf.Bytes(), []byte(`class="evidence"`))
-	if !(heroIndex < exampleIndex && exampleIndex < actionIndex && actionIndex < evidenceIndex) {
-		t.Fatalf("report order must be averages, example, action/share, evidence; got indexes %d, %d, %d, %d", heroIndex, exampleIndex, actionIndex, evidenceIndex)
+	if !(heroIndex < actionIndex && actionIndex < evidenceIndex) {
+		t.Fatalf("report order must be averages, action/share, evidence; got indexes %d, %d, %d", heroIndex, actionIndex, evidenceIndex)
 	}
 }
 

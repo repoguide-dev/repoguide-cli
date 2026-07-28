@@ -98,6 +98,10 @@ func runReport(_ *cobra.Command, _ []string) error {
 		worstSessionForPayload = &worst
 	}
 	view.RepoAverages = analysis.AverageStartCost(events)
+	// Per-session strips need the raw event order too, for the same reason as
+	// the case study above: the sanitized bundle has no per-session events.
+	view.SessionStrips = analysis.BuildSessionStrips(status.RepoRoot, events)
+	view.StripBlockPx = stripBlockPx(view.SessionStrips)
 
 	payload, err := json.MarshalIndent(sharePayload{
 		RepoAnalysisBundle: bundle,
@@ -216,6 +220,15 @@ type reportView struct {
 	WorstSession    analysis.WorstSessionCase
 	RepoAverages    analysis.RepoStartCost
 
+	// One strip per session, shown locally only: the strips carry session
+	// titles/prompts, so they stay out of sharePayload rather than widening
+	// what a shared link exposes beyond the single reviewed case study.
+	SessionStrips []analysis.SessionStrip
+	// StripBlockPx is the width of one call block, shared by every strip so a
+	// row's total length is its call count. Sized so the longest session fills
+	// the column exactly and no row can overflow it.
+	StripBlockPx float64
+
 	// EstimatedSavingsUSD projects what RepoGuide would have saved across every
 	// analyzed session: inputTokenSavingsRate off the input+cache-token slice
 	// of cost (output tokens aren't reduced by loading less context).
@@ -310,6 +323,30 @@ func buildReportView(bundle analysis.RepoAnalysisBundle) reportView {
 	}
 
 	return v
+}
+
+// stripColumnPx is the widest a strip may draw - the content column, minus
+// room for the first-edit divider. A row is calls × block width, so this is
+// what stops the longest session from running past the page.
+const stripColumnPx = 900
+
+// stripBlockPx sizes one call block so the longest session exactly fills the
+// column. Capped at 5px so a repo with only short sessions doesn't render a
+// handful of fat slabs.
+func stripBlockPx(strips []analysis.SessionStrip) float64 {
+	longest := 0
+	for _, s := range strips {
+		if s.Calls > longest {
+			longest = s.Calls
+		}
+	}
+	if longest == 0 {
+		return 5
+	}
+	if px := stripColumnPx / float64(longest); px < 5 {
+		return px
+	}
+	return 5
 }
 
 func traceLabel(t analysis.RepoAnalysisTrace) string {
@@ -457,6 +494,34 @@ th,td{text-align:left;padding:10px 14px;border-top:1px solid #211f1c;vertical-al
 thead th{border-top:none;background:#151310}
 th{color:#8a857a;font-weight:500;font-size:11.5px;text-transform:uppercase;letter-spacing:.05em}
 td.path{font-family:ui-monospace,SFMono-Regular,Menlo,monospace;color:#F0EEE6;font-size:12.5px}
+.legend{display:flex;flex-wrap:wrap;gap:16px;align-items:center;margin:12px 0 18px;font-size:12.5px;color:#A6A195}
+.legend span{display:flex;align-items:center;gap:6px}
+.legend i{width:13px;height:13px;border-radius:3px;display:inline-block}
+.legend i.m-edit{background:#2fbd7e}
+.legend i.m-ok{background:#4a4741}
+.legend i.m-cold{background:#F54E00}
+.legend i.m-unused{background:#E5A50A}
+.legend i.m-reopen{background:#8B7BFF}
+.legend i.legend-mark{width:3px;height:15px;border-radius:0;background:#F7F5EF}
+.legend .legend-hint{margin-left:auto;color:#6e6a61;font-size:11.5px}
+.guide-badge{display:inline-block;margin-right:7px;padding:1px 6px;border-radius:5px;background:#24180f;color:#F54E00;font-size:10px;font-weight:700;letter-spacing:.04em;vertical-align:1px}
+.strip-row{margin-bottom:12px}
+.strip-head{font-size:12.5px}
+.strip-head .strip-title{display:block;color:#F0EEE6;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.strip-line{display:grid;grid-template-columns:1fr;gap:2px;margin-top:4px}
+.strip{display:flex;gap:0;overflow:hidden}
+.strip i{flex:0 0 var(--u);height:14px;cursor:default}
+.strip i.first-edit-mark{flex:0 0 2px;min-width:2px;border-radius:0;background:#F7F5EF;height:20px;margin:0 2px}
+.strip-tail{color:#6e6a61;font-size:11.5px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.strip-tail b{color:#A6A195;font-weight:600}
+.strip i:hover{outline:1px solid #C9C4B8}
+.strip i.m-ok{background:#4a4741}
+.strip i.m-cold{background:#F54E00}
+.strip i.m-unused{background:#E5A50A}
+.strip i.m-reopen{background:#8B7BFF}
+.strip i.m-edit{background:#2fbd7e}
+.strip i.hl{outline:1px solid #F7F5EF}
+#strip-tip{position:fixed;z-index:60;display:none;max-width:min(520px,90vw);padding:6px 9px;border:1px solid #3a3630;border-radius:7px;background:#0c0b0a;color:#F0EEE6;font:12px/1.4 ui-monospace,SFMono-Regular,Menlo,monospace;overflow-wrap:anywhere;pointer-events:none;box-shadow:0 6px 24px rgba(0,0,0,.5)}
 .savings{margin-top:16px;border:1px solid #2f6b4f;border-radius:14px;padding:20px;background:linear-gradient(135deg,#132119,#0f1a14)}
 .savings h2{color:#F7F5EF;margin:0 0 4px}
 .savings .why{background:#0f1a14;border-color:#1f3d2e}
@@ -515,22 +580,67 @@ pre{background:#0c0b0a;border:1px solid #262420;border-radius:10px;padding:14px;
 {{end}}
 </div>
 
-{{if .HasWorstSession}}
-<div class="case-study">
-<p class="tag">Example session</p>
-{{if .WorstSession.SessionTitle}}<h3 class="case-title">{{.WorstSession.SessionTitle}}</h3>{{else if .WorstSession.Prompt}}<h3 class="case-title">{{.WorstSession.Prompt}}</h3>{{end}}
-<div class="case-metrics">
-<div class="case-metric"><b>{{.WorstSession.FilesRead}}</b><span>files read</span></div>
-<div class="case-metric"><b>{{.WorstSession.Searches}}</b><span>searches run</span></div>
-<div class="case-metric"><b>{{.WorstSession.FilesReopened}}</b><span>files reopened</span></div>
-</div>
-<p class="first-edit">All before the first edit: <code>{{.WorstSession.EditedFile}}</code></p>
-</div>
-{{else if .HasBiggestPath}}
+{{if .HasBiggestPath}}
 <div class="opportunity">
 <h3>Biggest opportunity</h3>
 <p class="subdiagnosis">Work around <strong class="path">{{traceLabel .BiggestPath}}</strong> matched across {{.BiggestPath.Sessions}} sessions, with {{printf "%.1f" .BiggestPath.AvgReadsBeforeEdit}} reads before the first edit{{if .BiggestPath.TopPrecedingReads}} — most often reading {{precedingReads .BiggestPath}} first{{end}}.</p>
 </div>
+{{end}}
+
+{{if .SessionStrips}}
+<section id="strips" style="--u:{{printf "%.3f" .StripBlockPx}}px">
+<h2>Every session as a trace — {{len .SessionStrips}} session{{if ne (len .SessionStrips) 1}}s{{end}}</h2>
+<p class="why"><b>What this is:</b> one strip per session, one block per tool call, left to right, every block the same width — so a row's length is its call count — with a white divider where the first edit landed: everything left of it is the hunt, everything right of it is the work. Everything after the first edit is counted on the right, not drawn. Only mechanical markers: a search with no file read in the next 3 calls, a read of a file the session never edited, a re-read of a file already opened, and the edits. <b>Why it matters:</b> none of these is proof of a wrong turn. The long rows are sessions that spent dozens of calls finding the file; the counts on the right are where the rest of the session went, which in the biggest sessions is mostly opening the same files again.</p>
+<div class="legend">
+<span><i class="m-ok"></i>nothing flagged</span>
+<span><i class="m-cold"></i>search, no read after</span>
+<span><i class="m-unused"></i>read, never edited</span>
+<span><i class="m-reopen"></i>re-read a file</span>
+<span><i class="m-edit"></i>edit</span>
+<span><i class="legend-mark"></i>first edit</span>
+<span class="legend-hint">hover a block for its tool and file</span>
+</div>
+{{range $s := .SessionStrips}}<div class="strip-row">
+<div class="strip-head"><span class="strip-title">{{if $s.UsedGuide}}<b class="guide-badge">RepoGuide</b>{{end}}{{$s.Title}}</span></div>
+<div class="strip-line">
+<div class="strip">{{range $i, $m := $s.Markers}}{{if eq $i $s.PreEditIndex}}<i class="first-edit-mark" data-l="first edit"></i>{{end}}<i class="m-{{$m}}" data-l="{{index $s.Labels $i}}" data-f="{{index $s.Files $i}}"></i>{{end}}</div>
+<div class="strip-tail"><b>{{$s.Calls}} calls · edit at {{$s.EditIndex}}{{if $s.CostUSD}} · {{printf "$%.2f" $s.CostUSD}}{{end}}</b>{{if $s.AfterCalls}} · after: {{$s.AfterEdits}} edits, {{$s.AfterReads}} re-reads, {{$s.AfterOther}} other{{end}}{{if $s.TopReads}} · {{$s.TopFile}} opened {{$s.TopReads}}×{{end}}</div>
+</div>
+</div>{{end}}
+</section>
+<script>
+// Hovering one call lights up every other call against the same file within
+// that same session - repeats inside one strip are what the marker is about.
+// The native title tooltip is too slow and too easy to miss on a 14px block,
+// so the tool/file label is drawn next to the cursor instead.
+(function(){
+  var strips=document.getElementById('strips'),marked=[];
+  if(!strips)return;
+  var tip=document.createElement('div');
+  tip.id='strip-tip';document.body.appendChild(tip);
+  function clear(){
+    marked.forEach(function(el){el.classList.remove('hl');});marked=[];
+    tip.style.display='none';
+  }
+  strips.addEventListener('mousemove',function(e){
+    var block=e.target.closest('.strip i');
+    clear();
+    if(!block)return;
+    tip.textContent=block.dataset.l||'';
+    tip.style.display='block';
+    // Flip to the left of the cursor when the label would run off-screen.
+    var w=tip.offsetWidth;
+    tip.style.left=Math.max(6,Math.min(e.clientX+14,window.innerWidth-w-6))+'px';
+    tip.style.top=Math.max(6,e.clientY-tip.offsetHeight-10)+'px';
+    var file=block.dataset.f;
+    if(!file)return;
+    Array.prototype.forEach.call(block.parentNode.children,function(el){
+      if(el.dataset.f===file){el.classList.add('hl');marked.push(el);}
+    });
+  });
+  strips.addEventListener('mouseleave',clear);
+})();
+</script>
 {{end}}
 
 <div class="savings">
