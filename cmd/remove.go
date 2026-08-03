@@ -149,11 +149,17 @@ func runRemoveAll(cmd *cobra.Command, _ []string) error {
 	// MCP process that recreates local state during the purge.
 	mcpResults := mcpinternal.UninstallMCPClients()
 
+	// Load the token before wiping: RemoveAllTrackedData deletes the whole
+	// RepoGuide directory, auth.json included, so loading it afterwards always
+	// failed and the cloud deletion below was silently skipped - purge left
+	// every backend repo record orphaned.
+	token, tokenOK := clientauth.Load()
+
 	result, err := repopkg.RemoveAllTrackedData()
 	if err != nil {
 		return err
 	}
-	if token, ok := clientauth.Load(); ok {
+	if tokenOK {
 		client := sessionimport.CloudClient{
 			BaseURL: getBackendURL(),
 			Token:   token.Token,
