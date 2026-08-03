@@ -3,6 +3,7 @@ package cmd
 import (
 	"fmt"
 
+	"github.com/repoguide/repoguide-cli/internal/sessionimport"
 	"github.com/spf13/cobra"
 )
 
@@ -18,3 +19,8 @@ func init() {
 		},
 	})
 }
+
+// The backend gates behavior on which CLI is calling, and internal packages
+// can't import cmd (cmd imports them), so the ldflags-injected version is
+// pushed down at startup rather than pulled up.
+func init() { sessionimport.ClientVersion = Version }

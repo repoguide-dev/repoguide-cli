@@ -103,6 +103,16 @@ func isLoopbackHost(host string) bool {
 	return ip != nil && ip.IsLoopback()
 }
 
+// ClientVersion is the CLI version reported to the backend on every request,
+// set from cmd.Version at startup (cmd can't be imported here - it imports this
+// package). The backend uses it to gate behavior that depends on what a given
+// CLI is capable of sending, so a newer server stays safe for older clients.
+var ClientVersion = "dev"
+
+// ClientVersionHeader carries ClientVersion. Kept as a constant so the backend
+// and the CLI can't drift on the spelling.
+const ClientVersionHeader = "X-Repoguide-Cli-Version"
+
 func (c CloudClient) newRequest(method, path string, body io.Reader) (*http.Request, error) {
 	baseURL, err := validateBackendURL(c.BaseURL)
 	if err != nil {
@@ -111,7 +121,12 @@ func (c CloudClient) newRequest(method, path string, body io.Reader) (*http.Requ
 	if err := validateBackendRequestPath(path); err != nil {
 		return nil, err
 	}
-	return http.NewRequest(method, baseURL+path, body)
+	req, err := http.NewRequest(method, baseURL+path, body)
+	if err != nil {
+		return nil, err
+	}
+	req.Header.Set(ClientVersionHeader, ClientVersion)
+	return req, nil
 }
 
 func validateBackendRequestPath(path string) error {
