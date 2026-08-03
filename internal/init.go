@@ -460,7 +460,38 @@ func KnownFilesForBranch(repoRoot, branch string) []string {
 	if err != nil || out == "" {
 		return nil
 	}
-	return strings.Split(out, "\n")
+	return append(strings.Split(out, "\n"), submoduleFiles(repoRoot, ref)...)
+}
+
+// submoduleFiles lists the files inside each submodule of ref, prefixed with
+// the submodule's path in the superproject. ls-tree stops at a gitlink, so
+// without this an umbrella repo reports only its own top-level files and every
+// path inside a submodule looks deleted - which would make callers filter away
+// the entire codebase. Reads each submodule's checked-out worktree rather than
+// its recorded commit: close enough for an existence check, and it costs one
+// git call per submodule instead of a tree walk.
+func submoduleFiles(repoRoot, ref string) []string {
+	out, err := gitOutputAt(repoRoot, "ls-tree", "-r", "-d", "--format=%(objecttype) %(path)", ref)
+	if err != nil || out == "" {
+		return nil
+	}
+	var files []string
+	for _, line := range strings.Split(out, "\n") {
+		objectType, path, ok := strings.Cut(strings.TrimSpace(line), " ")
+		if !ok || objectType != "commit" {
+			continue
+		}
+		sub, err := gitOutputAt(filepath.Join(repoRoot, path), "ls-files")
+		if err != nil || sub == "" {
+			continue
+		}
+		for _, f := range strings.Split(sub, "\n") {
+			if f != "" {
+				files = append(files, path+"/"+f)
+			}
+		}
+	}
+	return files
 }
 
 // listConfiguredRepos and normalizePathForCompare are duplicated here (from

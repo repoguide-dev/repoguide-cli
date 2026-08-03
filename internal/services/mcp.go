@@ -122,8 +122,14 @@ func (s *MCPService) buildTaskOutput(ctx context.Context, repoID, task string, t
 		repoRoot = repo.RepoRoot
 	}
 	sessions, _ := s.store.Events().Get(ctx, repoID)
+	// Filter the topic before building, not just the package after: the topic's
+	// curated paths seed both the rendered start files and the file-overlap gate
+	// in BuildTaskPackage, so a stale path (renamed, moved, or left behind by a
+	// repo split) otherwise both misdirects the agent and blocks session matches.
+	known := knownFilesSet(knownFiles)
+	topic = experience.FilterTopicToKnownFiles(topic, known)
 	pkg := experience.BuildTaskPackage(task, repoRoot, topic, sessions)
-	pkg = experience.FilterTaskPackageFiles(pkg, knownFilesSet(knownFiles))
+	pkg = experience.FilterTaskPackageFiles(pkg, known)
 	pkg = experience.SetSelectionBudget(pkg, matchCount)
 	topicFeedback := experience.FeedbackForTopic(topic.ID, feedback)
 	pkg = experience.ApplyAdviceFeedback(pkg, topicFeedback)
