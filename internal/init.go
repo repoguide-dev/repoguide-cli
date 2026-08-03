@@ -605,6 +605,9 @@ func InitRepoAt(repoRoot string, opts InitOptions) (InitResult, error) {
 
 	repoID := existingRepoID
 	if repoID == "" {
+		repoID = strings.TrimSpace(opts.RepoID)
+	}
+	if repoID == "" {
 		repoID, err = generateRepoID(root)
 		if err != nil {
 			return InitResult{}, err

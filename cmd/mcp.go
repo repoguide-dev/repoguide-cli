@@ -927,7 +927,7 @@ func (m mcpInstallModel) updateConfirm(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			return m, tea.Batch(m.spinner.Tick, func() tea.Msg {
 				results := make([]mcpInstallResult, 0, len(confirmed))
 				for _, repoPath := range confirmed {
-					_, initErr := internal.InitRepoAt(repoPath, internal.InitOptions{})
+					_, initErr := internal.InitRepoAt(repoPath, internal.InitOptions{RepoID: adoptedRepoIDFor(repoPath)})
 					var filename string
 					var err error
 					if initErr != nil {
@@ -1157,7 +1157,7 @@ func runMCPInstallApprove(noHooks bool) error {
 	}
 
 	for _, repoPath := range repos {
-		if _, err := internal.InitRepoAt(repoPath, internal.InitOptions{}); err != nil {
+		if _, err := internal.InitRepoAt(repoPath, internal.InitOptions{RepoID: adoptedRepoIDFor(repoPath)}); err != nil {
 			fmt.Printf("  ✗ %s: %s\n", filepath.Base(repoPath), err)
 			continue
 		}

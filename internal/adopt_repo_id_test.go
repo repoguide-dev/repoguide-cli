@@ -48,3 +48,33 @@ func TestInitRepoAdoptsProvidedRepoID(t *testing.T) {
 		t.Fatalf("existing identity was overridden: got %q, want %q", res2.RepoID, adopted)
 	}
 }
+
+// InitRepoAt is the entry point `repoguide mcp install` uses, and it is the
+// more common way a repo gets registered - so it has to adopt an existing ID
+// too. Wiring adoption into `repo init` alone still minted a fresh ID here,
+// which is how this workspace ended up with a fourth cloud record after a
+// purge.
+func TestInitRepoAtAdoptsProvidedRepoID(t *testing.T) {
+	dir := t.TempDir()
+	store := filepath.Join(dir, "store")
+	t.Setenv("HOME", dir)
+	SetRepoGuideDirOverride(store)
+	t.Cleanup(func() { SetRepoGuideDirOverride("") })
+
+	repo := filepath.Join(dir, "repo")
+	if err := os.MkdirAll(repo, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	runGit(t, repo, "init", "-b", "main")
+	runGit(t, repo, "config", "user.email", "test@example.com")
+	runGit(t, repo, "config", "user.name", "Test User")
+
+	const adopted = "repo_existing_cafebabe"
+	res, err := InitRepoAt(repo, InitOptions{Mode: "online", RepoID: adopted})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if res.RepoID != adopted {
+		t.Fatalf("RepoID = %q, want the adopted %q", res.RepoID, adopted)
+	}
+}
