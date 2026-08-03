@@ -24,6 +24,12 @@ var ErrNotGitRepo = errors.New("no Git repository found")
 type InitOptions struct {
 	Force bool
 	Mode  string // "local" or "online"
+	// RepoID adopts an existing identity instead of minting a random one. It is
+	// used when the caller has already found this directory registered under a
+	// known ID (see CloudClient.FindRepoIDForRoot) - local state having been
+	// purged does not mean the repository is new. Ignored when git config or the
+	// local store already knows this repo.
+	RepoID string
 }
 
 type InitResult struct {
@@ -186,6 +192,9 @@ func InitRepo(opts InitOptions) (InitResult, error) {
 	}
 
 	repoID := existingRepoID
+	if repoID == "" {
+		repoID = strings.TrimSpace(opts.RepoID)
+	}
 	if repoID == "" {
 		repoID, err = generateRepoID(repoRoot)
 		if err != nil {

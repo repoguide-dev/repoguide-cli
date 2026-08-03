@@ -1562,3 +1562,55 @@ func (c CloudClient) localRecordMCPFeedback(repoID string, req MCPFeedbackReques
 	_, err := c.localSvc.Feedback.PutFeedback(context.Background(), fb)
 	return err
 }
+
+// FindRepoIDForRoot returns the repo ID this user already has registered for
+// repoRoot, or "" if there is none. Local state is the normal way a repo keeps
+// its identity across runs, but that state is exactly what `repoguide purge`
+// (or an rm -rf of the data directory) removes. Without this lookup the next
+// init mints a fresh random ID and the backend, which keys only on repo_id,
+// stores a second record for the same directory - splitting a repository's
+// history in half and leaving topics on the orphaned side.
+//
+// repo_url must agree when both sides have one, so that a different project
+// later occupying the same path is not silently merged into the old repo.
+func (c CloudClient) FindRepoIDForRoot(repoRoot string) string {
+	if strings.TrimSpace(c.Token) == "" || strings.TrimSpace(c.BaseURL) == "" || strings.TrimSpace(repoRoot) == "" {
+		return ""
+	}
+	req, err := c.newRequest(http.MethodGet, "/api/repos", nil)
+	if err != nil {
+		return ""
+	}
+	req.Header.Set("Authorization", "Bearer "+c.Token)
+	resp, err := c.httpClient().Do(req)
+	if err != nil {
+		return ""
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode >= 300 {
+		return ""
+	}
+	var payload struct {
+		Repos []struct {
+			RepoID   string `json:"repo_id"`
+			RepoRoot string `json:"repo_root"`
+			RepoURL  string `json:"repo_url"`
+			TeamID   string `json:"team_id"`
+		} `json:"repos"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&payload); err != nil {
+		return ""
+	}
+	wantURL := strings.TrimSpace(remoteRepoURL(repoRoot))
+	wantRoot := filepath.Clean(repoRoot)
+	for _, repo := range payload.Repos {
+		if filepath.Clean(repo.RepoRoot) != wantRoot {
+			continue
+		}
+		if gotURL := strings.TrimSpace(repo.RepoURL); wantURL != "" && gotURL != "" && !strings.EqualFold(gotURL, wantURL) {
+			continue
+		}
+		return repo.RepoID
+	}
+	return ""
+}

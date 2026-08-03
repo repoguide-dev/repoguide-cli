@@ -18,6 +18,7 @@ import (
 	clientauth "github.com/repoguide/repoguide-cli/internal/auth"
 	"github.com/repoguide/repoguide-cli/internal/config"
 	"github.com/repoguide/repoguide-cli/internal/localrunner"
+	repopkg "github.com/repoguide/repoguide-cli/internal/repo"
 	"github.com/repoguide/repoguide-cli/internal/runtime"
 	"github.com/repoguide/repoguide-cli/internal/sessionimport"
 	"github.com/repoguide/repoguide-cli/internal/sqlitestore"
@@ -67,10 +68,24 @@ func runInit(cmd *cobra.Command, _ []string) error {
 	if offlineMode {
 		mode = "local"
 	}
+	// A purge (or a deleted data directory) wipes the local record of this
+	// repo's ID, but the backend still has it. Reuse that identity instead of
+	// registering the same directory a second time under a fresh random ID,
+	// which splits the repository's history across two records.
+	adoptRepoID := ""
+	if !offlineMode {
+		if token, ok := clientauth.Load(); ok {
+			adoptRepoID = sessionimport.CloudClient{
+				BaseURL: getBackendURL(),
+				Token:   token.Token,
+			}.FindRepoIDForRoot(repopkg.DetectLocalSetup().RepoRoot)
+		}
+	}
 	result = RunWithSpinner("Initializing RepoGuide", func(_ func(current, total int, label string)) internal.InitResult {
 		result, err = internal.InitRepo(internal.InitOptions{
-			Force: force,
-			Mode:  mode,
+			Force:  force,
+			Mode:   mode,
+			RepoID: adoptRepoID,
 		})
 		return result
 	})
@@ -89,8 +104,9 @@ func runInit(cmd *cobra.Command, _ []string) error {
 			}
 			result = RunWithSpinner("Initializing RepoGuide", func(_ func(current, total int, label string)) internal.InitResult {
 				result, err = internal.InitRepo(internal.InitOptions{
-					Force: force,
-					Mode:  mode,
+					Force:  force,
+					Mode:   mode,
+					RepoID: adoptRepoID,
 				})
 				return result
 			})
