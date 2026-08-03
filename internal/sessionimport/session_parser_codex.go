@@ -65,6 +65,7 @@ func buildCodexSessionEvents(path string) ([]SessionEvent, error) {
 				Role      string `json:"role"`
 				Name      string `json:"name"`
 				Arguments string `json:"arguments"`
+				Input     string `json:"input"`
 				CallID    string `json:"call_id"`
 				Output    string `json:"output"`
 				Content   []struct {
@@ -104,7 +105,19 @@ func buildCodexSessionEvents(path string) ([]SessionEvent, error) {
 					event.LinesAdded, event.LinesRemoved = countPatchLines(commandText)
 				}
 				events = append(events, event)
-			case "function_call_output":
+			case "custom_tool_call":
+				// Codex's sandboxed "exec" tool arrives as a custom_tool_call with
+				// its script in `input` rather than `arguments`. Without this case
+				// a session that did all its work through exec looks like it made
+				// no tool calls at all, which reads as zero exploration.
+				events = append(events, SessionEvent{
+					Kind:        "tool_call",
+					Timestamp:   raw.Timestamp,
+					ToolName:    payload.Name,
+					ToolCallID:  payload.CallID,
+					CommandText: payload.Input,
+				})
+			case "function_call_output", "custom_tool_call_output":
 				events = append(events, SessionEvent{
 					Kind:       "tool_result",
 					Timestamp:  raw.Timestamp,
@@ -152,6 +165,12 @@ func buildCodexSessionEvents(path string) ([]SessionEvent, error) {
 						TokenUsage: usage,
 					})
 				}
+			case "mcp_tool_call_end":
+				// MCP calls have no response_item of their own — this is their only
+				// record. The cohort classifier pairs a repoguide tool_call with its
+				// result, so both halves have to be synthesized here or every Codex
+				// session that used RepoGuide files as a control.
+				events = append(events, parseCodexMCPCall(raw.Payload, raw.Timestamp)...)
 			case "patch_apply_end":
 				// Current Codex applies edits through a native patch tool rather than a
 				// shell apply_patch heredoc, so the unified diffs here are the only
@@ -167,6 +186,53 @@ func buildCodexSessionEvents(path string) ([]SessionEvent, error) {
 	}
 	numberSessionEvents(events)
 	return events, nil
+}
+
+// parseCodexMCPCall expands an mcp_tool_call_end payload into the call/result
+// pair every other agent's log records natively. The tool name is joined as
+// server__tool to match the mcp__server__tool convention the tool-name
+// predicates elsewhere expect.
+func parseCodexMCPCall(raw json.RawMessage, timestamp string) []SessionEvent {
+	var payload struct {
+		CallID     string `json:"call_id"`
+		Invocation struct {
+			Server string `json:"server"`
+			Tool   string `json:"tool"`
+		} `json:"invocation"`
+		Result struct {
+			Ok *struct {
+				Content []struct {
+					Text string `json:"text"`
+				} `json:"content"`
+				IsError bool `json:"isError"`
+			} `json:"Ok"`
+			Err *string `json:"Err"`
+		} `json:"result"`
+	}
+	if err := json.Unmarshal(raw, &payload); err != nil || payload.Invocation.Tool == "" {
+		return nil
+	}
+	name := payload.Invocation.Tool
+	if payload.Invocation.Server != "" {
+		name = payload.Invocation.Server + "__" + name
+	}
+	result := SessionEvent{Kind: "tool_result", Timestamp: timestamp, ToolCallID: payload.CallID}
+	switch {
+	case payload.Result.Err != nil:
+		result.IsError = true
+		result.Text = *payload.Result.Err
+	case payload.Result.Ok != nil:
+		result.IsError = payload.Result.Ok.IsError
+		var texts []string
+		for _, c := range payload.Result.Ok.Content {
+			texts = append(texts, c.Text)
+		}
+		result.Text = strings.Join(texts, "\n")
+	}
+	return []SessionEvent{
+		{Kind: "tool_call", Timestamp: timestamp, ToolName: name, ToolCallID: payload.CallID},
+		result,
+	}
 }
 
 // parseCodexPatchApply turns a patch_apply_end payload into a single edit event
