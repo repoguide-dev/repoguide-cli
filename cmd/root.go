@@ -90,7 +90,7 @@ func refuseIfMajorBehind(cmd *cobra.Command) {
 	if Version == "dev" || cmd.Name() == "update" {
 		return
 	}
-	latest, err := latestReleaseVersion(2 * time.Second)
+	latest, err := cachedLatestReleaseVersion(2 * time.Second)
 	if err != nil {
 		return
 	}
@@ -155,8 +155,13 @@ func backgroundSync() {
 	}
 	client := sessionimport.CloudClient{BaseURL: getBackendURL(), Token: token.Token}
 	if Version != "dev" {
+		// The backend's required minimum forces an update even when the cached
+		// release lookup is stale; autoUpdateToLatest then picks up everything
+		// else, so an ordinary patch no longer waits for the floor to move.
 		if required, err := client.CheckRequiredVersion(); err == nil && semverLess(Version, required) {
 			autoUpdateOutdatedCLI(required)
+		} else {
+			autoUpdateToLatest()
 		}
 	}
 	if len(cloudRepos) == 0 {

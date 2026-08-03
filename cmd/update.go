@@ -17,6 +17,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/repoguide/repoguide-cli/internal"
 	"github.com/spf13/cobra"
 )
 
@@ -269,4 +270,92 @@ func replaceExecutable(exe string, newData []byte) error {
 	}
 	os.Remove(oldPath)
 	return nil
+}
+
+// latestReleaseCacheTTL bounds how often the release lookup touches
+// api.github.com. Unauthenticated callers get 60 requests per hour per IP, and
+// that budget is shared with every other tool on the machine - including
+// `repoguide update` itself. Checking on every invocation exhausted it during
+// an active day and locked users out of the very command the check tells them
+// to run, so the answer is cached and a new release is picked up within half a
+// day rather than instantly.
+const latestReleaseCacheTTL = 12 * time.Hour
+
+type latestReleaseCache struct {
+	Version string `json:"version"`
+	// CheckedAt is when Version was fetched, not when it was published.
+	CheckedAt time.Time `json:"checkedAt"`
+	// NotifiedVersion is the last version a Homebrew install was warned about.
+	// Those can't self-update, and the check now runs on every command, so
+	// without this the user gets the same warning until they act on it.
+	NotifiedVersion string `json:"notifiedVersion,omitempty"`
+}
+
+func latestReleaseCachePath() string {
+	return filepath.Join(internal.RepoGuideDir(), "cache", "latest-release.json")
+}
+
+func readLatestReleaseCache() latestReleaseCache {
+	var cached latestReleaseCache
+	data, err := os.ReadFile(latestReleaseCachePath())
+	if err != nil {
+		return latestReleaseCache{}
+	}
+	if err := json.Unmarshal(data, &cached); err != nil {
+		return latestReleaseCache{}
+	}
+	return cached
+}
+
+func writeLatestReleaseCache(cached latestReleaseCache) {
+	path := latestReleaseCachePath()
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		return
+	}
+	if data, err := json.Marshal(cached); err == nil {
+		_ = os.WriteFile(path, data, 0o644)
+	}
+}
+
+// cachedLatestReleaseVersion is the release lookup for checks that run on every
+// command. `repoguide update` deliberately calls latestReleaseVersion directly:
+// someone who typed "update" wants the truth, not a cached answer.
+func cachedLatestReleaseVersion(timeout time.Duration) (string, error) {
+	if cached := readLatestReleaseCache(); cached.Version != "" && time.Since(cached.CheckedAt) < latestReleaseCacheTTL {
+		return cached.Version, nil
+	}
+	version, err := latestReleaseVersion(timeout)
+	if err != nil {
+		return "", err
+	}
+	cached := readLatestReleaseCache()
+	cached.Version, cached.CheckedAt = version, time.Now()
+	writeLatestReleaseCache(cached)
+	return version, nil
+}
+
+// autoUpdateToLatest keeps the CLI current on every release, not only when the
+// backend raises its required minimum - a patch that fixes what the CLI sends
+// to the backend never moves that floor, so those fixes used to reach nobody
+// until they hit a major bump or ran `update` by hand.
+func autoUpdateToLatest() {
+	latest, err := cachedLatestReleaseVersion(5 * time.Second)
+	if err != nil || !semverLess(Version, latest) {
+		return
+	}
+	exe, err := os.Executable()
+	if err != nil {
+		return
+	}
+	if strings.Contains(exe, "Cellar") {
+		if cached := readLatestReleaseCache(); cached.NotifiedVersion != latest {
+			cached.NotifiedVersion = latest
+			writeLatestReleaseCache(cached)
+			fmt.Fprintf(os.Stderr, "\nrepoguide %s is available (you have %s). Run `brew upgrade repoguide`.\n\n", latest, Version)
+		}
+		return
+	}
+	if updated, installed, err := selfUpdate(exe, 30*time.Second); err == nil && updated {
+		fmt.Fprintf(os.Stderr, "\nUpdated repoguide CLI from %s to %s. Restart to use the new version.\n\n", Version, installed)
+	}
 }
